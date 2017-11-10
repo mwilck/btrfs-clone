@@ -170,6 +170,9 @@ class Subvol:
             return
         return prop_set_ro(self.get_path(mnt), yesno)
 
+    def __cmp__(self, other):
+        c = cmp(self.ogen, other.ogen)
+        return (c if c else cmp(self.uuid, other.uuid))
 
 def get_subvols(mnt):
     vols = subprocess.check_output([opts.btrfs, "subvolume", "list",
