@@ -304,13 +304,9 @@ def send_subvol_parent(subvol, get_parents, old, new):
                  send_flags = p_flags + c_flags)
 
 
-def send_subvols_parent(old_mnt, new_mnt):
-    subvols = get_subvols(old_mnt)
+def send_subvols_parent(old_mnt, new_mnt, subvols):
     get_parents = parents_getter({ x.uuid: x for x in subvols })
-
     new_subvols = []
-    atexit.register(set_all_ro, False, subvols, old_mnt)
-    set_all_ro(True, subvols, old_mnt)
 
     for sv in subvols[:2]:
         send_subvol_parent(sv, get_parents, old_mnt, new_mnt)
@@ -319,14 +315,58 @@ def send_subvols_parent(old_mnt, new_mnt):
         #    print (sv.ro_str(new_mnt))
         new_subvols.append(sv)
 
-def send_subvols_subvol(old, new):
-    subvols = get_subvols(old_mnt)
+def svdir_getter(base):
+    def _getter(sv):
+        return "%s/%d" % (base, sv.id)
+    return _getter
+
+def send_subvol_snap(sv, subvols, old, dir_fn, parent=None):
+
+    dir = dir_fn(sv)
+    if not opts.dry_run:
+        os.mkdir(dir)
+    path = sv.get_path(old)
+
+    if parent is not None:
+        flags = [ "-p", parent.get_path(old), "-c", parent.get_path(old)]
+    else:
+        flags = []
+    do_send_recv(path, dir, send_flags = flags)
+    if not sv.ro and not opts.dry_run:
+        prop_set_ro("%s/%s" % (dir, os.path.basename(path)), False)
+
+    snaps = [x for x in subvols if x.parent_uuid == sv.uuid]
+    snaps.sort(reverse = True)
+
+    prev = sv
+    for snap in snaps:
+        send_subvol_snap(snap, subvols, old, dir_fn, parent=prev)
+        prev = snap
+
+def send_subvols_snap(old, new, subvols):
+
+    svbase = "%s/%s" % (new, randstr())
+    if not opts.dry_run:
+        os.mkdir(svbase)
+    dir_fn = svdir_getter(svbase)
+
+    for sv in (x for x in subvols if x.parent_uuid is None):
+        send_subvol_snap(sv, subvols, old, dir_fn)
+
+    for sv in subvols:
+        dir = dir_fn(sv)
+        if not opts.dry_run and not os.path.isdir(dir):
+            print ("error: %s was not created" % dir)
 
 def send_subvols(old_mnt, new_mnt):
+    subvols = get_subvols(old_mnt)
+    atexit.register(set_all_ro, False, subvols, old_mnt)
+    set_all_ro(True, subvols, old_mnt)
+
     if opts.strategy == "parent":
-        send_subvols_parent(old_mnt, new_mnt)
-    elif opts.strategy == "subvol":
-        send_subvols_subvol(old_mnt, new_mnt)
+        send_subvols_parent(old_mnt, new_mnt, subvols)
+    elif opts.strategy == "snapshot":
+        send_subvols_snap(old_mnt, new_mnt, subvols)
 
 def parents_getter(lookup):
     def _getter(x):
