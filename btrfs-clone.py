@@ -323,7 +323,7 @@ def svdir_getter(base):
 def send_subvol_snap(sv, subvols, old, dir_fn, parent=None):
 
     dir = dir_fn(sv)
-    if not opts.dry_run:
+    if not opts.dry_run and not os.path.isdir(dir):
         os.mkdir(dir)
     path = sv.get_path(old)
 
@@ -331,9 +331,14 @@ def send_subvol_snap(sv, subvols, old, dir_fn, parent=None):
         flags = [ "-p", parent.get_path(old), "-c", parent.get_path(old)]
     else:
         flags = []
-    do_send_recv(path, dir, send_flags = flags)
-    if not sv.ro and not opts.dry_run:
-        prop_set_ro("%s/%s" % (dir, os.path.basename(path)), False)
+
+    newpath = "%s/%s" % (dir, os.path.basename(path))
+    if os.path.isdir(newpath):
+        print ("%s exists, not sending" % newpath)
+    else:
+        do_send_recv(path, dir, send_flags = flags)
+        if not sv.ro and not opts.dry_run:
+            prop_set_ro(newpath, False)
 
     snaps = [x for x in subvols if x.parent_uuid == sv.uuid]
     snaps.sort(reverse = True)
@@ -345,8 +350,8 @@ def send_subvol_snap(sv, subvols, old, dir_fn, parent=None):
 
 def send_subvols_snap(old, new, subvols):
 
-    svbase = "%s/%s" % (new, randstr())
-    if not opts.dry_run:
+    svbase = "%s/%s" % (new, opts.snap_base if opts.snap_base else randstr())
+    if not opts.dry_run and not os.path.isdir(svbase):
         os.mkdir(svbase)
     dir_fn = svdir_getter(svbase)
 
@@ -356,7 +361,7 @@ def send_subvols_snap(old, new, subvols):
     for sv in subvols:
         dir = dir_fn(sv)
         if not opts.dry_run and not os.path.isdir(dir):
-            print ("error: %s was not created" % dir)
+            raise RuntimeError("error: %s was not created" % dir)
 
 def send_subvols(old_mnt, new_mnt):
     subvols = get_subvols(old_mnt)
@@ -388,6 +393,7 @@ def make_args():
     ps.add_argument("-n", "--dry-run", action='store_true')
     ps.add_argument("-s", "--strategy", default="parent",
                     choices=["parent", "snapshot"])
+    ps.add_argument("--snap-base")
     ps.add_argument("-t", "--toplevel", action='store_false',
                     help="clone toplevel into a subvolume")
     ps.add_argument("old")
