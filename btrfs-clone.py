@@ -103,6 +103,7 @@ import gzip
 from uuid import uuid4
 from argparse import ArgumentParser
 from stat import ST_DEV
+from time import sleep
 
 opts = None
 VERBOSE = []
@@ -469,6 +470,7 @@ def make_args():
     ps = ArgumentParser()
     ps.add_argument("-v", "--verbose", action='count', default=0)
     ps.add_argument("-B", "--btrfs", default="btrfs")
+    ps.add_argument("-f", "--force", action='store_true')
     ps.add_argument("-n", "--dry-run", action='store_true')
     ps.add_argument("-s", "--strategy", default="snapshot",
                     choices=["parent", "snapshot"])
@@ -492,12 +494,26 @@ if __name__ == "__main__":
     parse_args()
 
     (old_uuid, old_mnt) = mount_root_subvol(opts.old)
-    print ("OLD btrfs %s mounted on %s" % (old_uuid, old_mnt))
     (new_uuid, new_mnt) = mount_root_subvol(opts.new)
+
+    msg = None
     if (old_uuid == new_uuid):
-        raise RuntimeError("%s and %s are the same file system" %
-                           (opts.old, opts.new))
-    print ("NEW btrfs %s mounted on %s" % (new_uuid, new_mnt))
+        msg = ("%s and %s are the same file system" %
+               (opts.old, opts.new))
+    if len(os.listdir(new_mnt)) > 0:
+        msg = "fileystem %s is not empty" % opts.new
+
+    if msg is not None:
+        if not opts.force:
+            raise RuntimeError(msg)
+        else:
+            print ("*** WARNING ***: %s" % msg)
+            print ("Hit ctrl-c within 10 seconds ...")
+            sleep(10)
+
+    if (opts.verbose > 0):
+        print ("OLD btrfs %s mounted on %s" % (old_uuid, old_mnt))
+        print ("NEW btrfs %s mounted on %s" % (new_uuid, new_mnt))
 
     new_mnt = send_root(old_mnt, new_mnt)
     send_subvols(old_mnt, new_mnt)
