@@ -329,7 +329,7 @@ def send_subvols(old_mnt, new_mnt):
         send_subvols_subvol(old_mnt, new_mnt)
 
 def parents_getter(lookup):
-    def _getter(x, lookup):
+    def _getter(x):
         p = []
         while x.parent_uuid is not None:
             try:
@@ -339,7 +339,7 @@ def parents_getter(lookup):
             else:
                 p.append(x)
         return p
-    return lambda x: _getter(x, lookup=lookup)
+    return _getter
 
 def make_args():
     ps = ArgumentParser()
