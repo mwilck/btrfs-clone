@@ -260,10 +260,10 @@ def do_send_recv(old, new, send_flags=[]):
             print ("please check %s and %s" % (send_name, recv_name))
         else:
             if send.returncode != 0:
-                print ("Error in send:\n%s" % send.stderr)
+                print ("Error in send:\n%s" % send.stderr.read())
             if recv.returncode != 0:
-                print ("Error in recv:\n%s" % recv.stderr)
-        raise RuntimeError("Error in send/recv for %s" % subvol)
+                print ("Error in recv:\n%s" % recv.stderr.read())
+        raise RuntimeError("Error in send/recv for %s -> %s" % (old, new))
 
 def send_root(old, new):
     name = randstr()
