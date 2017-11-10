@@ -78,6 +78,16 @@ def check_call(*args, **kwargs):
     if not opts.dry_run:
         subprocess.check_call(*args, **kwargs)
 
+def prop_get_ro(path, yesno):
+    info = subprocess.check_output([opts.btrfs, "property", "get", "-ts",
+                                    path, "ro"])
+    info = info.rstrip()
+    return info == "ro=true"
+
+def prop_set_ro(path, yesno):
+    check_call([opts.btrfs, "property", "set", "-ts",
+                path, "ro", "true" if yesno else "false"])
+
 class Subvol:
     class NoSubvol(ValueError):
         pass
@@ -148,10 +158,7 @@ class Subvol:
         return "%s/%s" % (self.get_mnt(mnt), self.path)
 
     def get_ro(self, mnt = None):
-        info = subprocess.check_output([opts.btrfs, "property", "get",
-                                        "-ts", self.get_path(mnt)])
-        info = info.rstrip()
-        return info == "ro=true"
+        return prop_get_ro(self.get_path(mnt))
 
     def ro_str(self, mnt = None, prefix=""):
         return ("%s%s (%s): %s" % (prefix, self.path, self.ro,
@@ -161,12 +168,8 @@ class Subvol:
         # Never change a subvol that was already ro
         if self.ro:
             return
-        if yesno:
-            setto = "true"
-        else:
-            setto = "false"
-        check_call([opts.btrfs, "property", "set", "-ts",
-                    self.get_path(mnt), "ro", setto])
+        return prop_set_ro(self.get_path(mnt), yesno)
+
 
 def get_subvols(mnt):
     vols = subprocess.check_output([opts.btrfs, "subvolume", "list",
