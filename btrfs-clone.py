@@ -61,6 +61,18 @@ import os
 import subprocess
 import atexit
 import tempfile
+import gzip
+
+BTRFS = os.getenv("BTRFS")
+if not BTRFS:
+    BTRFS = "btrfs"
+_v = os.getenv("CLONE_VERBOSE")
+if _v:
+    _v = int(_v) 
+    VERBOSE = ["-v"] * _v
+    del _v
+else:
+    VERBOSE = []
 
 class Subvol:
     class NoSubvol(ValueError):
@@ -85,7 +97,7 @@ class Subvol:
         self.check_show()
 
     def check_show(self):
-        info = subprocess.check_output(["btrfs", "subvolume", "show",
+        info = subprocess.check_output([BTRFS, "subvolume", "show",
                                         "%s/%s" % (self.mnt, self.path)])
         for line in info.split("\n"):
             try:
@@ -132,7 +144,7 @@ class Subvol:
         return "%s/%s" % (self.get_mnt(mnt), self.path)
 
     def get_ro(self, mnt = None):
-        info = subprocess.check_output(["btrfs", "property", "get",
+        info = subprocess.check_output([BTRFS, "property", "get",
                                         "-ts", self.get_path(mnt)])
         info = info.rstrip()
         return info == "ro=true"
@@ -149,11 +161,11 @@ class Subvol:
             setto = "true"
         else:
             setto = "false"
-        subprocess.check_call(["btrfs", "property", "set", "-ts",
+        subprocess.check_call([BTRFS, "property", "set", "-ts",
                                self.get_path(mnt), "ro", setto])
 
 def get_subvols(mnt):
-    vols = subprocess.check_output(["btrfs", "subvolume", "list",
+    vols = subprocess.check_output([BTRFS, "subvolume", "list",
                                     "-t", "--sort=ogen",
                                     mnt])
     svs = []
@@ -177,7 +189,7 @@ def umount_root_subvol(dir):
 
 def mount_root_subvol(mnt):
     td = tempfile.mkdtemp()
-    info = subprocess.check_output(["btrfs", "filesystem", "show", mnt])
+    info = subprocess.check_output([BTRFS, "filesystem", "show", mnt])
     line = info.split("\n")[0]
     uuid = re.search(r"uuid: (?P<uuid>[-a-f0-9]*)", line).group("uuid")
     subprocess.check_call(["mount",
@@ -210,24 +222,45 @@ def send_subvol(subvol, get_parents, old, new):
     else:
         p_flags = []
 
-    send_cmd = ["btrfs", "send"] + p_flags + c_flags + [subvol.get_path(old)]
-    recv_cmd = ["btrfs", "receive", os.path.dirname(subvol.get_path(new))]
+    if VERBOSE:
+        name = subvol.path.replace("/", "-")
+        recv_log = gzip.open("btrfs-recv-%s.log.gz" % name, "wb")
+        send_log = gzip.open("btrfs-send-%s.log.gz" % name, "wb")
+    else:
+        recv_log = None
+        send_log = None
+
+    send_cmd = ([BTRFS, "send"] + VERBOSE + p_flags + c_flags +
+                [subvol.get_path(old)])
+    recv_cmd = ([BTRFS, "receive"] + VERBOSE +
+                [os.path.dirname(subvol.get_path(new))])
     print ("%s |\n\t %s" % (" ".join(send_cmd), " ".join(recv_cmd)))
 
-    send = subprocess.Popen(send_cmd, stdout=subprocess.PIPE)
-    recv = subprocess.Popen(recv_cmd, stdin=send.stdout)
-    send.stdout.close()
-
-    recv.communicate()
-    if recv.returncode != 0:
+    try:
+        send = subprocess.Popen(send_cmd, stdout=subprocess.PIPE,
+                                stderr=send_log)
+        recv = subprocess.Popen(recv_cmd, stdin=send.stdout,
+                                stderr=recv_log)
+        send.stdout.close()
+        recv.communicate()
+        send.wait()
+    finally:
+        if VERBOSE:
+            recv_log.close()
+            send_log.close()
+    if recv.returncode != 0 or send.returncode != 0:
         raise RuntimeError("Error in send/recv for %s" % subvol)
 
 def parents_getter(lookup):
     def _getter(x, lookup):
         p = []
         while x.parent_uuid is not None:
-            x = lookup[x.parent_uuid]
-            p.append(x)
+            try:
+                x = lookup[x.parent_uuid]
+            except KeyError:
+                break
+            else:
+                p.append(x)
         return p
     return lambda x: _getter(x, lookup=lookup)
 
@@ -254,4 +287,5 @@ if __name__ == "__main__":
     for sv in subvols:
         send_subvol(sv, get_parents, old_mnt, new_mnt)
         sv.set_ro(False, new_mnt)
+        print (sv.ro_str(new_mnt))
         new_subvols.append(sv)
