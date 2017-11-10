@@ -66,25 +66,16 @@ from uuid import uuid4
 from argparse import ArgumentParser
 from stat import ST_DEV
 
-DRY = False
-BTRFS = os.getenv("BTRFS")
-if not BTRFS:
-    BTRFS = "btrfs"
-_v = os.getenv("CLONE_VERBOSE")
-if _v:
-    _v = int(_v) 
-    VERBOSE = ["-v"] * _v
-    del _v
-else:
-    VERBOSE = []
+opts = None
+VERBOSE = []
 
 def randstr():
     return str(uuid4())[-12:]
 
 def check_call(*args, **kwargs):
-    if VERBOSE:
+    if opts.verbose:
         print (" ".join(args[0]))
-    if not DRY:
+    if not opts.dry_run:
         subprocess.check_call(*args, **kwargs)
 
 class Subvol:
@@ -110,7 +101,7 @@ class Subvol:
         self.check_show()
 
     def check_show(self):
-        info = subprocess.check_output([BTRFS, "subvolume", "show",
+        info = subprocess.check_output([opts.btrfs, "subvolume", "show",
                                         "%s/%s" % (self.mnt, self.path)])
         for line in info.split("\n"):
             try:
@@ -157,7 +148,7 @@ class Subvol:
         return "%s/%s" % (self.get_mnt(mnt), self.path)
 
     def get_ro(self, mnt = None):
-        info = subprocess.check_output([BTRFS, "property", "get",
+        info = subprocess.check_output([opts.btrfs, "property", "get",
                                         "-ts", self.get_path(mnt)])
         info = info.rstrip()
         return info == "ro=true"
@@ -174,11 +165,11 @@ class Subvol:
             setto = "true"
         else:
             setto = "false"
-        check_call([BTRFS, "property", "set", "-ts",
+        check_call([opts.btrfs, "property", "set", "-ts",
                     self.get_path(mnt), "ro", setto])
 
 def get_subvols(mnt):
-    vols = subprocess.check_output([BTRFS, "subvolume", "list",
+    vols = subprocess.check_output([opts.btrfs, "subvolume", "list",
                                     "-t", "--sort=ogen",
                                     mnt])
     svs = []
@@ -202,7 +193,7 @@ def umount_root_subvol(dir):
 
 def mount_root_subvol(mnt):
     td = tempfile.mkdtemp()
-    info = subprocess.check_output([BTRFS, "filesystem", "show", mnt])
+    info = subprocess.check_output([opts.btrfs, "filesystem", "show", mnt])
     line = info.split("\n")[0]
     uuid = re.search(r"uuid: (?P<uuid>[-a-f0-9]*)", line).group("uuid")
     subprocess.check_call(["mount", "-o", "subvolid=5", "UUID=%s" % uuid, td])
@@ -227,21 +218,22 @@ def set_all_ro(yesno, subvols, mnt = None):
                 raise
 
 def do_send_recv(old, new, send_flags=[]):
-    send_cmd = ([BTRFS, "send"] + VERBOSE + send_flags + [old])
-    recv_cmd = ([BTRFS, "receive"] + VERBOSE + [new])
+    send_cmd = ([opts.btrfs, "send"] + VERBOSE + send_flags + [old])
+    recv_cmd = ([opts.btrfs, "receive"] + VERBOSE + [new])
 
-    if len(VERBOSE) > 1:
+    if opts.verbose > 1:
         name = new.replace("/", "-")
         recv_name = "btrfs-recv-%s.log.gz" % name
         send_name = "btrfs-send-%s.log.gz" % name
         recv_log = gzip.open(recv_name, "wb")
         send_log = gzip.open(send_name, "wb")
-        print ("%s |\n\t %s" % (" ".join(send_cmd), " ".join(recv_cmd)))
     else:
         recv_log = subprocess.PIPE
         send_log = subprocess.PIPE
 
-    if DRY:
+    if opts.verbose:
+        print ("%s |\n\t %s" % (" ".join(send_cmd), " ".join(recv_cmd)))
+    if opts.dry_run:
         return
 
     try:
@@ -253,12 +245,12 @@ def do_send_recv(old, new, send_flags=[]):
         recv.communicate()
         send.wait()
     finally:
-        if len (VERBOSE) > 1:
+        if opts.verbose > 1:
             recv_log.close()
             send_log.close()
 
     if recv.returncode != 0 or send.returncode != 0:
-        if len (VERBOSE) > 1:
+        if opts.verbose > 1:
             print ("please check %s and %s" % (send_name, recv_name))
         else:
             if send.returncode != 0:
@@ -271,15 +263,15 @@ def send_root(old, new):
     name = randstr()
     old_snap = "%s/%s" % (old, name)
     new_snap = "%s/%s" % (new, name)
-    subprocess.check_call([BTRFS, "subvolume", "snapshot", "-r", old, old_snap])
+    subprocess.check_call([opts.btrfs, "subvolume", "snapshot", "-r", old, old_snap])
     atexit.register(subprocess.check_call,
-                    [BTRFS, "subvolume", "delete", old_snap])
+                    [opts.btrfs, "subvolume", "delete", old_snap])
     do_send_recv(old_snap, new)
-    check_call([BTRFS, "property", "set", new_snap, "ro", "false"])
+    check_call([opts.btrfs, "property", "set", new_snap, "ro", "false"])
 
-    dir = old_snap if DRY else new_snap
+    dir = old_snap if opts.dry_run else new_snap
     dev = os.lstat(dir)[ST_DEV]
-    if TOPLEVEL:
+    if opts.toplevel:
         for el in os.listdir(dir):
             path = "%s/%s" %(dir, el)
             dev1 = os.lstat(path)[ST_DEV]
@@ -287,8 +279,8 @@ def send_root(old, new):
                 continue
             # Can' use os.rename here (cross device link)
             check_call(["mv", "-f", "-t", new] +
-                       (["-v"] if VERBOSE else []) + [path])
-        check_call([BTRFS, "subvolume", "delete", new_snap])
+                       (["-v"] if opts.verbose else []) + [path])
+        check_call([opts.btrfs, "subvolume", "delete", new_snap])
         ret = new
     else:
         ret = new_snap
@@ -317,7 +309,7 @@ def send_subvols(old_mnt, new_mnt):
     for sv in subvols[:2]:
         send_subvol(sv, get_parents, old_mnt, new_mnt)
         sv.set_ro(False, new_mnt)
-        #if not DRY:
+        #if not opts.dry_run:
         #    print (sv.ro_str(new_mnt))
         new_subvols.append(sv)
 
@@ -336,9 +328,11 @@ def parents_getter(lookup):
 
 def make_args():
     ps = ArgumentParser()
-    ps.add_argument("-v", "--verbose", action='count')
-    ps.add_argument("-B", "--btrfs")
+    ps.add_argument("-v", "--verbose", action='count', default=0)
+    ps.add_argument("-B", "--btrfs", default="btrfs")
     ps.add_argument("-n", "--dry-run", action='store_true')
+    ps.add_argument("-s", "--strategy", default="parent",
+                    choices=["parent", "snapshot"])
     ps.add_argument("-t", "--toplevel", action='store_false',
                     help="clone toplevel into a subvolume")
     ps.add_argument("old")
@@ -346,29 +340,23 @@ def make_args():
     return ps
 
 def parse_args():
-    global BTRFS
-    global DRY
+    global opts
     global VERBOSE
-    global TOPLEVEL
 
     ps = make_args()
     opts = ps.parse_args()
-    if opts.btrfs is not None:
-        BTRFS = opts.btrfs
     if opts.verbose is not None:
         VERBOSE = ["-v"] * opts.verbose
-    DRY = opts.dry_run
-    TOPLEVEL = opts.toplevel
-    return (opts.old, opts.new)
 
 if __name__ == "__main__":
-    old, new = parse_args()
+    parse_args()
 
-    (old_uuid, old_mnt) = mount_root_subvol(old)
+    (old_uuid, old_mnt) = mount_root_subvol(opts.old)
     print ("OLD btrfs %s mounted on %s" % (old_uuid, old_mnt))
-    (new_uuid, new_mnt) = mount_root_subvol(new)
+    (new_uuid, new_mnt) = mount_root_subvol(opts.new)
     if (old_uuid == new_uuid):
-        raise RuntimeError("%s and %s are the same file system" % (old, new))
+        raise RuntimeError("%s and %s are the same file system" %
+                           (opts.old, opts.new))
     print ("NEW btrfs %s mounted on %s" % (new_uuid, new_mnt))
 
     new_mnt = send_root(old_mnt, new_mnt)
