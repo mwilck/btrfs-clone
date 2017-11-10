@@ -43,12 +43,17 @@
 # The two file systems don't need to be mounted by the toplevel subvolume, the
 # program will remount the top subvolumes on temporary mount points.
 #
-# Error handling is pretty basic, the program will only refuse to overwrite
-# a file system with the same UUID. For other problems, this program relies
-# on the btrfs tools to fail, and will abort if that happens. The tool will
-# not attempt to continue after cloning a certain subvolume failed.
+# Error handling is pretty basic. This program relies on the btrfs tools
+# to fail, and will abort if that happens (for example, btrfs-receive
+# refuses to overwrite existing subvolumes, which is a good thing). The tool
+# doesn't attempt to continue after cloning a certain subvolume failed.
+# As long as you clone to a fresh file system, this tool can't do much
+# harm to your system. The FS to be cloned is only touched for creating a
+# snapshot of the toplevel volume (see "toplevel" below).
 #
 # During the cloning, all subvolumes of the origin FS are set to read-only.
+# Thus if cloning your root fs, make sure there isn't much other stuff going
+# on in the system.
 #
 # Cloning by strategies: "parent" vs. "snapshot"
 # ==============================================
@@ -61,20 +66,23 @@
 #
 #    current - snap4 - snap3 -snap2 - snap1
 #
-# With "parent" topology, we'd clone "current" and after that the snapshots,
-# using "current" as "parent" ("-p" option to btrfs-send) for every snapshot.
+# With "parent" topology (which was Thomas' original proposal),, we'd clone
+# "current" and after that the snapshots, using "current" as "parent"
+# ("-p" option to btrfs-send) for every snapshot.
 # But obviously the similarity between snap1 and snap2 will be much higher then
 # between snap1 and current. This will cause a waste of disk space, as shared
 # extents can't be used efficiently.
 #
 # "snapshot" strategy uses the "neighbour snapshot" as parent.
 # We clone "current" first, then snap4 with -p current, snap3 with -p snap4,
-# etc. This ensures that differences are as small as possible.
+# etc. This ensures that differences are as small as possible. We could have
+# done it in reverse order as well (starting with "snap1"), but that would
+# cause the clone of "current" to appear as a snapshot; I don't like that idea.
 #
 # This has the side effect that the parent-child relationships (expressed by
 # parent_uuid) are different in the cloned file system compared to the original
 # (snap3 will appear to be a snapshot of snap4, whereas it was a snapshot of
-# current in the original FS). Also, file systems will not be cloned in theq
+# current in the original FS). Also, file systems will not be cloned in the
 # order of their creation, thus when we clone a subvolume, we can't be sure that
 # its parent in the filesystem tree (btrfs "parent_id", don't confuse with
 # "parent_uuid") has already been transferred. Therefore we clone into a flat
