@@ -136,7 +136,7 @@ class Subvol:
             elif k == "Flags":
                 self.ro = (v.find("readonly") != -1)
 
-        for attr in ("parent_uuid", "ro", "ogen", "uuid"):
+        for attr in ("parent_id", "parent_uuid", "ro", "ogen", "uuid"):
             if not hasattr(self, attr):
                 raise self.MissingAttr("%s: no %s" % (self, attr))
 
