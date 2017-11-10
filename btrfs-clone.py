@@ -475,6 +475,7 @@ def make_args():
     ps.add_argument("-s", "--strategy", default="snapshot",
                     choices=["parent", "snapshot"])
     ps.add_argument("--snap-base")
+    ps.add_argument("--no-unshare", action='store_true')
     ps.add_argument("-t", "--toplevel", action='store_false',
                     help="clone toplevel into a subvolume")
     ps.add_argument("old")
@@ -492,6 +493,10 @@ def parse_args():
 
 if __name__ == "__main__":
     parse_args()
+
+    if not opts.no_unshare:
+        print ("unsharing mount namespace")
+        os.execvp("unshare", ["unshare", "-m"] + sys.argv + ["--no-unshare"])
 
     (old_uuid, old_mnt) = mount_root_subvol(opts.old)
     (new_uuid, new_mnt) = mount_root_subvol(opts.new)
