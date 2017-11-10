@@ -62,6 +62,7 @@ import subprocess
 import atexit
 import tempfile
 import gzip
+from uuid import uuid4
 
 BTRFS = os.getenv("BTRFS")
 if not BTRFS:
@@ -73,6 +74,9 @@ if _v:
     del _v
 else:
     VERBOSE = []
+
+def randstr():
+    return str(uuid4())[-12:]
 
 class Subvol:
     class NoSubvol(ValueError):
