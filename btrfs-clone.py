@@ -65,6 +65,7 @@ import gzip
 from uuid import uuid4
 from argparse import ArgumentParser
 
+DRY = False
 BTRFS = os.getenv("BTRFS")
 if not BTRFS:
     BTRFS = "btrfs"
@@ -172,8 +173,8 @@ class Subvol:
             setto = "true"
         else:
             setto = "false"
-        subprocess.check_call([BTRFS, "property", "set", "-ts",
-                               self.get_path(mnt), "ro", setto])
+        check_call([BTRFS, "property", "set", "-ts",
+                    self.get_path(mnt), "ro", setto])
 
 def get_subvols(mnt):
     vols = subprocess.check_output([BTRFS, "subvolume", "list",
@@ -193,7 +194,7 @@ def get_subvols(mnt):
 
 def umount_root_subvol(dir):
     try:
-        subprocess.check_call(["umount", "-l", dir])
+        check_call(["umount", "-l", dir])
         os.rmdir(dir)
     except:
         pass
@@ -203,8 +204,7 @@ def mount_root_subvol(mnt):
     info = subprocess.check_output([BTRFS, "filesystem", "show", mnt])
     line = info.split("\n")[0]
     uuid = re.search(r"uuid: (?P<uuid>[-a-f0-9]*)", line).group("uuid")
-    subprocess.check_call(["mount",
-                           "-o", "subvolid=5", "UUID=%s" % uuid, td])
+    check_call(["mount", "-o", "subvolid=5", "UUID=%s" % uuid, td])
     atexit.register(umount_root_subvol, td)
     return (uuid, td)
 
@@ -246,6 +246,8 @@ def send_subvol(subvol, get_parents, old, new):
     recv_cmd = ([BTRFS, "receive"] + VERBOSE +
                 [os.path.dirname(subvol.get_path(new))])
     print ("%s |\n\t %s" % (" ".join(send_cmd), " ".join(recv_cmd)))
+    if DRY:
+        return
 
     try:
         send = subprocess.Popen(send_cmd, stdout=subprocess.PIPE,
@@ -279,11 +281,13 @@ def make_args():
     ps = ArgumentParser()
     ps.add_argument("-v", "--verbose", action='count')
     ps.add_argument("-B", "--btrfs")
+    ps.add_argument("-n", "--dry-run", action='store_true')
     ps.add_argument("old")
     ps.add_argument("new")
 
 def parse_args():
     global BTRFS
+    global DRY
     global VERBOSE
 
     ps = make_args()
@@ -292,6 +296,7 @@ def parse_args():
         BTRFS = opts.B
     if opts.v is not None:
         VERBOSE = opts.v
+    DRY = opts.n
     return (opts.old, opts.new)
 
 if __name__ == "__main__":
