@@ -284,6 +284,7 @@ def make_args():
     ps.add_argument("-n", "--dry-run", action='store_true')
     ps.add_argument("old")
     ps.add_argument("new")
+    return ps
 
 def parse_args():
     global BTRFS
