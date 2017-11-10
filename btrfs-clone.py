@@ -305,6 +305,22 @@ def send_subvol(subvol, get_parents, old, new):
     do_send_recv(subvol.get_path(old), os.path.dirname(subvol.get_path(new)),
                  send_flags = p_flags + c_flags)
 
+
+def send_subvols(old_mnt, new_mnt):
+    subvols = get_subvols(old_mnt)
+    get_parents = parents_getter({ x.uuid: x for x in subvols })
+
+    new_subvols = []
+    atexit.register(set_all_ro, False, subvols, old_mnt)
+    set_all_ro(True, subvols, old_mnt)
+
+    for sv in subvols[:2]:
+        send_subvol(sv, get_parents, old_mnt, new_mnt)
+        sv.set_ro(False, new_mnt)
+        #if not DRY:
+        #    print (sv.ro_str(new_mnt))
+        new_subvols.append(sv)
+
 def parents_getter(lookup):
     def _getter(x, lookup):
         p = []
@@ -356,17 +372,4 @@ if __name__ == "__main__":
     print ("NEW btrfs %s mounted on %s" % (new_uuid, new_mnt))
 
     new_mnt = send_root(old_mnt, new_mnt)
-
-    subvols = get_subvols(old_mnt)
-    get_parents = parents_getter({ x.uuid: x for x in subvols })
-
-    new_subvols = []
-    atexit.register(set_all_ro, False, subvols, old_mnt)
-    set_all_ro(True, subvols, old_mnt)
-
-    for sv in subvols[:2]:
-        send_subvol(sv, get_parents, old_mnt, new_mnt)
-        sv.set_ro(False, new_mnt)
-        #if not DRY:
-        #    print (sv.ro_str(new_mnt))
-        new_subvols.append(sv)
+    send_subvols(old_mnt, new_mnt)
