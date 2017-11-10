@@ -194,7 +194,7 @@ def get_subvols(mnt):
 
 def umount_root_subvol(dir):
     try:
-        check_call(["umount", "-l", dir])
+        subprocess.check_call(["umount", "-l", dir])
         os.rmdir(dir)
     except:
         pass
@@ -204,7 +204,7 @@ def mount_root_subvol(mnt):
     info = subprocess.check_output([BTRFS, "filesystem", "show", mnt])
     line = info.split("\n")[0]
     uuid = re.search(r"uuid: (?P<uuid>[-a-f0-9]*)", line).group("uuid")
-    check_call(["mount", "-o", "subvolid=5", "UUID=%s" % uuid, td])
+    subprocess.check_call(["mount", "-o", "subvolid=5", "UUID=%s" % uuid, td])
     atexit.register(umount_root_subvol, td)
     return (uuid, td)
 
