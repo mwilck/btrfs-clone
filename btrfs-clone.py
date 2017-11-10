@@ -279,6 +279,40 @@ def svdir_getter(base):
         return "%s/%d" % (base, sv.id)
     return _getter
 
+def send_subvol_chrono(sv, subvols, old, dir_fn, parent=None):
+
+    dir = dir_fn(sv)
+    if not opts.dry_run and not os.path.isdir(dir):
+        os.mkdir(dir)
+    path = sv.get_path(old)
+
+    snaps = [x for x in subvols if x.parent_uuid == sv.uuid]
+    snaps.sort(key = lambda x: (x.ogen, x.id))
+
+    # print ("%s: %s" % (sv.path, " ".join([x.path for x in snaps])))
+    prev = None
+    for snap in snaps:
+        send_subvol_chrono(snap, subvols, old, dir_fn, parent=prev)
+        prev = snap
+
+    if parent is None:
+        parent = prev
+        prev = None
+    if parent is not None:
+        flags = [ "-p", parent.get_path(old), "-c", parent.get_path(old)]
+    else:
+        flags = []
+    if prev is not None:
+        flags += [ "-c", prev.get_path(old) ]
+
+    newpath = "%s/%s" % (dir, os.path.basename(path))
+    if os.path.isdir(newpath):
+        print ("%s exists, not sending" % newpath)
+    else:
+        do_send_recv(path, dir, send_flags = flags)
+        if not sv.ro and not opts.dry_run:
+            prop_set_ro(newpath, False)
+
 def send_subvol_snap(sv, subvols, old, dir_fn, parent=None):
 
     dir = dir_fn(sv)
@@ -354,7 +388,10 @@ def send_subvols_snap(old, new, subvols):
     dir_fn = svdir_getter(svbase)
 
     for sv in (x for x in subvols if x.parent_uuid is None):
-        send_subvol_snap(sv, subvols, old, dir_fn)
+        if opts.strategy  == "snapshot":
+            send_subvol_snap(sv, subvols, old, dir_fn)
+        elif opts.strategy  == "chronological":
+            send_subvol_chrono(sv, subvols, old, dir_fn)
 
     subvols.sort(key = lambda x: (x.parent_id, x.id))
     done = set()
@@ -374,7 +411,7 @@ def send_subvols(old_mnt, new_mnt):
 
     if opts.strategy == "parent":
         send_subvols_parent(old_mnt, new_mnt, subvols)
-    elif opts.strategy == "snapshot":
+    elif opts.strategy == "snapshot" or opts.strategy == "chronological":
         send_subvols_snap(old_mnt, new_mnt, subvols)
 
 def parents_getter(lookup):
@@ -397,7 +434,7 @@ def make_args():
     ps.add_argument("-f", "--force", action='store_true')
     ps.add_argument("-n", "--dry-run", action='store_true')
     ps.add_argument("-s", "--strategy", default="snapshot",
-                    choices=["parent", "snapshot"])
+                    choices=["parent", "snapshot", "chronological"])
     ps.add_argument("--snap-base")
     ps.add_argument("--no-unshare", action='store_true')
     ps.add_argument("-t", "--toplevel", action='store_false',
