@@ -36,16 +36,11 @@
 # The new file system should be large enough to receive all data
 # from the old one. The tool does not check this.
 #
-# The new filesystem should ideally be newly created, but it doesn't have to be.
-# btrfs send/receive will fail (and this program abort) if someone tries
-# to overwrite an exisiting subvolume. So in the worst case, if the target
-# file system is not empty, it will receive some new subvolumes.
+# The new filesystem should ideally be newly created, and have a distinct
+# UUID from the one to be cloned. The --force option allows to attempt
+# cloning even if this is not the case.
 #
-# IT IS STRONGLY DISCOURAGED TO USE "/" OR ANOTHER PRODUCTIVE FILE SYSTEM
-# AS "NEW" (DESTINATION) FILE SYSTEM. THE TOOL WILL NOT PREVENT THIS.
-# YOU HAVE BEEN WARNED!
-#
-# The file systems don't need to be mounted by the top subvolume, the
+# The two file systems don't need to be mounted by the toplevel subvolume, the
 # program will remount the top subvolumes on temporary mount points.
 #
 # Error handling is pretty basic, the program will only refuse to overwrite
@@ -54,6 +49,49 @@
 # not attempt to continue after cloning a certain subvolume failed.
 #
 # During the cloning, all subvolumes of the origin FS are set to read-only.
+#
+# Cloning by strategies: "parent" vs. "snapshot"
+# ==============================================
+#
+# Try to clone using the closed "neighbour" snapshot rather than
+# the actual parent
+#
+# Consider the following typical topology, decreasing chronological order,
+# where the current fs tree has been snapshotted several times in the past:
+#
+#    current - snap4 - snap3 -snap2 - snap1
+#
+# With "parent" topology, we'd clone "current" and after that the snapshots,
+# using "current" as "parent" ("-p" option to btrfs-send) for every snapshot.
+# But obviously the similarity between snap1 and snap2 will be much higher then
+# between snap1 and current. This will cause a waste of disk space, as shared
+# extents can't be used efficiently.
+#
+# "snapshot" strategy uses the "neighbour snapshot" as parent.
+# We clone "current" first, then snap4 with -p current, snap3 with -p snap4,
+# etc. This ensures that differences are as small as possible.
+#
+# This has the side effect that the parent-child relationships (expressed by
+# parent_uuid) are different in the cloned file system compared to the original
+# (snap3 will appear to be a snapshot of snap4, whereas it was a snapshot of
+# current in the original FS). Also, file systems will not be cloned in theq
+# order of their creation, thus when we clone a subvolume, we can't be sure that
+# its parent in the filesystem tree (btrfs "parent_id", don't confuse with
+# "parent_uuid") has already been transferred. Therefore we clone into a flat
+# directory first (option "snapshot_base" or random name). When all subvols are
+# cloned, they can be moved into their desired fs tree position.
+#
+# The --toplevel option
+# =====================
+#
+# The toplevel "subvolume" of a BTRFS file system can't be cloned with
+# send/receive. It's only possible to create a snapshot of the toplevel
+# FS and clone that. Obviously, the cloned snapshot in the new FS will be
+# distinct from the toplevel of the new FS. By default, this tool moves the
+# content of the cloned snapshot to the toplevel of the new FS and deletes
+# the snapshot. If this is not desired, the --toplevel option can be used.
+# It causes the tool to keep the cloned snapshot volume and create all
+# subvolumes relative to it.
 
 import sys
 import re
