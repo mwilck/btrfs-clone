@@ -432,7 +432,7 @@ if __name__ == "__main__":
     if len(os.listdir(new_mnt)) > 0:
         msg = "fileystem %s is not empty" % opts.new
 
-    if msg is not None:
+    if msg is not None and not opts.dry_run:
         if not opts.force:
             raise RuntimeError(msg)
         else:
