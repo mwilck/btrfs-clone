@@ -344,6 +344,45 @@ def send_subvol_snap(sv, subvols, old, dir_fn, parent=None):
         send_subvol_snap(snap, subvols, old, dir_fn, parent=prev)
         prev = snap
 
+def move_to_tree_pos(sv, new, dir_fn, done):
+    goal = sv.get_path(new)
+    last = os.path.basename(goal)
+    dir = dir_fn(sv)
+    cur = "%s/%s" % (dir, last)
+
+    if opts.dry_run:
+        check_call(["mv", "-f", cur, os.path.dirname(goal)])
+        return
+
+    if not os.path.isdir(cur):
+        if os.path.isdir(goal):
+            print ("ah, %s already moved" % goal)
+            return True
+        else:
+            print ("ERROR: %s was not created" % cur)
+            return False
+    elif sv.parent_id == 5 or sv.parent_id in done:
+        if sv.ro:
+            prop_set_ro(cur, False)
+        try:
+            check_call(["mv", "-f", cur, os.path.dirname(goal)])
+        finally:
+            if sv.ro and os.path.isdir(cur):
+                try:
+                    prop_set_ro(cur, True)
+                except:
+                    pass
+        try:
+            os.rmdir(dir)
+        except OSError:
+            print ("Failed to remove %s (this is non-fatal)" % dir)
+        done.add(sv.id)
+        return True
+    else:
+        print ("Hmm, parent %d of %d not found" % (sv.parent_id, sv.id))
+        return False
+
+
 def send_subvols_snap(old, new, subvols):
 
     svbase = "%s/%s" % (new, opts.snap_base if opts.snap_base else randstr())
@@ -354,10 +393,16 @@ def send_subvols_snap(old, new, subvols):
     for sv in (x for x in subvols if x.parent_uuid is None):
         send_subvol_snap(sv, subvols, old, dir_fn)
 
+    subvols.sort(key = lambda x: (x.parent_id, x.id))
+    done = set()
     for sv in subvols:
-        dir = dir_fn(sv)
-        if not opts.dry_run and not os.path.isdir(dir):
-            raise RuntimeError("error: %s was not created" % dir)
+        move_to_tree_pos(sv, new, dir_fn, done)
+
+    if not opts.dry_run:
+        try:
+            os.rmdir(svbase)
+        except OSError:
+            print ("Failed to remove %s (this is non-fatal)" % svbase)
 
 def send_subvols(old_mnt, new_mnt):
     subvols = get_subvols(old_mnt)
