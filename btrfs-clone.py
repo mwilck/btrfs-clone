@@ -63,6 +63,7 @@ import atexit
 import tempfile
 import gzip
 from uuid import uuid4
+from argparse import ArgumentParser
 
 BTRFS = os.getenv("BTRFS")
 if not BTRFS:
@@ -77,6 +78,12 @@ else:
 
 def randstr():
     return str(uuid4())[-12:]
+
+def check_call(*args, **kwargs):
+    if VERBOSE > 0:
+        print ("".join(args[0]))
+    if not DRY:
+        subprocess.check_call(*args, **kwargs)
 
 class Subvol:
     class NoSubvol(ValueError):
@@ -268,11 +275,27 @@ def parents_getter(lookup):
         return p
     return lambda x: _getter(x, lookup=lookup)
 
+def make_args():
+    ps = ArgumentParser()
+    ps.add_argument("-v", "--verbose", action='count')
+    ps.add_argument("-B", "--btrfs")
+    ps.add_argument("old")
+    ps.add_argument("new")
+
+def parse_args():
+    global BTRFS
+    global VERBOSE
+
+    ps = make_args()
+    opts = ps.parse_args()
+    if opts.B is not None:
+        BTRFS = opts.B
+    if opts.v is not None:
+        VERBOSE = opts.v
+    return (opts.old, opts.new)
+
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        raise RuntimeError("usage: %s old-btrfs-mnt new-btrfs-mnt")
-    old = sys.argv[1]
-    new = sys.argv[2]
+    old, new = parse_args()
 
     (old_uuid, old_mnt) = mount_root_subvol(old)
     print ("OLD btrfs %s mounted on %s" % (old_uuid, old_mnt))
