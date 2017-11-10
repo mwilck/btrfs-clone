@@ -82,7 +82,7 @@ def randstr():
 
 def check_call(*args, **kwargs):
     if VERBOSE > 0:
-        print ("".join(args[0]))
+        print (" ".join(args[0]))
     if not DRY:
         subprocess.check_call(*args, **kwargs)
 
@@ -321,5 +321,6 @@ if __name__ == "__main__":
     for sv in subvols:
         send_subvol(sv, get_parents, old_mnt, new_mnt)
         sv.set_ro(False, new_mnt)
-        print (sv.ro_str(new_mnt))
+        if not DRY:
+            print (sv.ro_str(new_mnt))
         new_subvols.append(sv)
