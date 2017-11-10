@@ -293,11 +293,12 @@ def parse_args():
 
     ps = make_args()
     opts = ps.parse_args()
-    if opts.B is not None:
-        BTRFS = opts.B
-    if opts.v is not None:
-        VERBOSE = opts.v
-    DRY = opts.n
+    print dir(opts)
+    if opts.btrfs is not None:
+        BTRFS = opts.btrfs
+    if opts.verbose is not None:
+        VERBOSE = opts.verbose
+    DRY = opts.dry_run
     return (opts.old, opts.new)
 
 if __name__ == "__main__":
