@@ -287,7 +287,7 @@ def send_root(old, new):
         print ("top level subvol in clone is: %s" % name)
     return ret
 
-def send_subvol(subvol, get_parents, old, new):
+def send_subvol_parent(subvol, get_parents, old, new):
     ancestors = [[ "-c", x.get_path(old) ] for x in get_parents(subvol)]
     c_flags = [x for anc in ancestors for x in anc]
     if ancestors:
@@ -298,7 +298,7 @@ def send_subvol(subvol, get_parents, old, new):
                  send_flags = p_flags + c_flags)
 
 
-def send_subvols(old_mnt, new_mnt):
+def send_subvols_parent(old_mnt, new_mnt):
     subvols = get_subvols(old_mnt)
     get_parents = parents_getter({ x.uuid: x for x in subvols })
 
@@ -307,11 +307,20 @@ def send_subvols(old_mnt, new_mnt):
     set_all_ro(True, subvols, old_mnt)
 
     for sv in subvols[:2]:
-        send_subvol(sv, get_parents, old_mnt, new_mnt)
+        send_subvol_parent(sv, get_parents, old_mnt, new_mnt)
         sv.set_ro(False, new_mnt)
         #if not opts.dry_run:
         #    print (sv.ro_str(new_mnt))
         new_subvols.append(sv)
+
+def send_subvols_subvol(old, new):
+    subvols = get_subvols(old_mnt)
+
+def send_subvols(old_mnt, new_mnt):
+    if opts.strategy == "parent":
+        send_subvols_parent(old_mnt, new_mnt)
+    elif opts.strategy == "subvol":
+        send_subvols_subvol(old_mnt, new_mnt)
 
 def parents_getter(lookup):
     def _getter(x, lookup):
