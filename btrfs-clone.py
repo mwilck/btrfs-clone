@@ -470,7 +470,7 @@ def make_args():
     ps.add_argument("-v", "--verbose", action='count', default=0)
     ps.add_argument("-B", "--btrfs", default="btrfs")
     ps.add_argument("-n", "--dry-run", action='store_true')
-    ps.add_argument("-s", "--strategy", default="parent",
+    ps.add_argument("-s", "--strategy", default="snapshot",
                     choices=["parent", "snapshot"])
     ps.add_argument("--snap-base")
     ps.add_argument("-t", "--toplevel", action='store_false',
