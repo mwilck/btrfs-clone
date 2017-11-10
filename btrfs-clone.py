@@ -170,10 +170,6 @@ class Subvol:
             return
         return prop_set_ro(self.get_path(mnt), yesno)
 
-    def __cmp__(self, other):
-        c = cmp(self.ogen, other.ogen)
-        return (c if c else cmp(self.uuid, other.uuid))
-
 def get_subvols(mnt):
     vols = subprocess.check_output([opts.btrfs, "subvolume", "list",
                                     "-t", "--sort=ogen",
@@ -341,7 +337,7 @@ def send_subvol_snap(sv, subvols, old, dir_fn, parent=None):
             prop_set_ro(newpath, False)
 
     snaps = [x for x in subvols if x.parent_uuid == sv.uuid]
-    snaps.sort(reverse = True)
+    snaps.sort(reverse = True, key = lambda x: (x.ogen, x.id))
 
     prev = sv
     for snap in snaps:
