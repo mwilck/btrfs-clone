@@ -59,21 +59,12 @@ class Subvol:
     class MissingAttr(RuntimeError):
         pass
 
-    def __init__(self, mnt, line):
-        args = line.split()
-        if len(args) != 4:
-            raise self.NoSubvol(line)
+    def __init__(self, mnt, path):
         self.mnt = mnt
-        try:
-            self.id = int(args[0])
-        except ValueError:
-            raise self.NoSubvol(line)
-        self.gen = int(args[1])
-        self.toplevel = int(args[2])
-        self.path = args[3]
-        self.check_show()
+        self.path = path
+        self._init_from_show()
 
-    def check_show(self):
+    def _init_from_show(self):
         info = subprocess.check_output([opts.btrfs, "subvolume", "show",
                                         "%s/%s" % (self.mnt, self.path)])
         for line in info.split("\n"):
@@ -90,16 +81,17 @@ class Subvol:
                 if self.parent_uuid == "-":
                     self.parent_uuid = None
             elif k == "Subvolume ID":
-                if self.id != int(v):
-                    raise self.BadId(v)
+                self.id = int(v)
             elif k == "Parent ID":
                 self.parent_id = int(v)
+            elif k == "Generation":
+                self.gen = int(v)
             elif k == "Gen at creation":
                 self.ogen = int(v)
             elif k == "Flags":
                 self.ro = (v.find("readonly") != -1)
 
-        for attr in ("parent_id", "parent_uuid", "ro", "ogen", "uuid"):
+        for attr in ("parent_id", "parent_uuid", "ro", "gen", "ogen", "uuid"):
             if not hasattr(self, attr):
                 raise self.MissingAttr("%s: no %s" % (self, attr))
 
@@ -139,9 +131,12 @@ def get_subvols(mnt):
                                     mnt])
     svs = []
     for line in vols.split("\n"):
+        # Skip header lines
+        if line is "" or not line[0].isdigit():
+            continue
         try:
-            sv = Subvol(mnt, line)
-        except Subvol.NoSubvol:
+            sv = Subvol(mnt, line.split()[3])
+        except (Subvol.NoSubvol, IndexError):
             pass
         except:
             raise
