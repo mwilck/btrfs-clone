@@ -269,25 +269,14 @@ def send_subvols_parent(old_mnt, new_mnt, subvols):
         #    print (sv.ro_str(new_mnt))
         new_subvols.append(sv)
 
-def svdir_getter(base):
-    def _getter(sv):
-        return "%s/%d" % (base, sv.id)
-    return _getter
-
-def send_subvol_chrono(sv, subvols, old, dir_fn, parent=None):
-
-    dir = dir_fn(sv)
-    if not opts.dry_run and not os.path.isdir(dir):
-        os.mkdir(dir)
-    path = sv.get_path(old)
+def send_subvol_chrono(sv, subvols, old, sv_base, parent=None):
 
     snaps = [x for x in subvols if x.parent_uuid == sv.uuid]
     snaps.sort(key = lambda x: (x.ogen, x.id))
 
-    # print ("%s: %s" % (sv.path, " ".join([x.path for x in snaps])))
     prev = None
     for snap in snaps:
-        send_subvol_chrono(snap, subvols, old, dir_fn, parent=prev)
+        send_subvol_chrono(snap, subvols, old, sv_base, parent=prev)
         prev = snap
 
     if parent is None:
@@ -300,46 +289,29 @@ def send_subvol_chrono(sv, subvols, old, dir_fn, parent=None):
     if prev is not None:
         flags += [ "-c", prev.get_path(old) ]
 
-    newpath = "%s/%s" % (dir, os.path.basename(path))
-    if os.path.isdir(newpath):
-        print ("%s exists, not sending" % newpath)
-    else:
-        do_send_recv(path, dir, send_flags = flags)
-        if not sv.ro and not opts.dry_run:
-            prop_set_ro(newpath, False)
+    sv_base.send(sv, old, flags)
 
-def send_subvol_snap(sv, subvols, old, dir_fn, parent=None):
-
-    dir = dir_fn(sv)
-    if not opts.dry_run and not os.path.isdir(dir):
-        os.mkdir(dir)
-    path = sv.get_path(old)
+def send_subvol_snap(sv, subvols, old, sv_base, parent=None):
 
     if parent is not None:
         flags = [ "-p", parent.get_path(old), "-c", parent.get_path(old)]
     else:
         flags = []
 
-    newpath = "%s/%s" % (dir, os.path.basename(path))
-    if os.path.isdir(newpath):
-        print ("%s exists, not sending" % newpath)
-    else:
-        do_send_recv(path, dir, send_flags = flags)
-        if not sv.ro and not opts.dry_run:
-            prop_set_ro(newpath, False)
+    sv_base.send(sv, old, flags)
 
     snaps = [x for x in subvols if x.parent_uuid == sv.uuid]
     snaps.sort(reverse = True, key = lambda x: (x.ogen, x.id))
 
     prev = sv
     for snap in snaps:
-        send_subvol_snap(snap, subvols, old, dir_fn, parent=prev)
+        send_subvol_snap(snap, subvols, old, sv_base, parent=prev)
         prev = snap
 
-def move_to_tree_pos(sv, new, dir_fn, done):
+def move_to_tree_pos(sv, new, sv_base, done):
     goal = sv.get_path(new)
     last = os.path.basename(goal)
-    dir = dir_fn(sv)
+    dir = sv_base.sv_dir(sv)
     cur = "%s/%s" % (dir, last)
 
     if opts.dry_run:
@@ -374,30 +346,56 @@ def move_to_tree_pos(sv, new, dir_fn, done):
         print ("Hmm, parent %d of %d not found" % (sv.parent_id, sv.id))
         return False
 
+class SvBaseDir:
+    def __init__ (self, new, subvols):
+        self.base = "%s/%s" % (
+            new, opts.snap_base if opts.snap_base else randstr())
+        self.new = new
+        self.subvols = subvols
+
+    def __enter__(self):
+        if not opts.dry_run and not os.path.isdir(self.base):
+            os.mkdir(self.base)
+        return self
+
+    def __exit__(self, *args):
+        self.subvols.sort(key = lambda x: (x.parent_id, x.id))
+        done = set()
+        for sv in self.subvols:
+            move_to_tree_pos(sv, self.new, self, done)
+        if not opts.dry_run:
+            try:
+                os.rmdir(self.base)
+            except OSError:
+                print ("Failed to remove %s (this is non-fatal)" % self.base)
+
+    def sv_dir(self, sv):
+        return "%s/%s" % (self.base, sv.id)
+
+    def send(self, sv, old, flags):
+        dir = self.sv_dir(sv)
+        path = sv.get_path(old)
+        newpath = "%s/%s" % (dir, os.path.basename(path))
+        if not opts.dry_run and not os.path.isdir(dir):
+            os.mkdir(dir)
+        if os.path.isdir(newpath):
+            print ("%s exists, not sending" % newpath)
+        else:
+            do_send_recv(path, dir, send_flags = flags)
+            if not sv.ro and not opts.dry_run:
+                prop_set_ro(newpath, False)
 
 def send_subvols_snap(old, new, subvols):
 
-    svbase = "%s/%s" % (new, opts.snap_base if opts.snap_base else randstr())
-    if not opts.dry_run and not os.path.isdir(svbase):
-        os.mkdir(svbase)
-    dir_fn = svdir_getter(svbase)
+    with SvBaseDir(new, subvols) as sv_base:
+        for sv in (x for x in subvols if x.parent_uuid is None):
+            if opts.strategy  == "snapshot":
+                send_subvol_snap(sv, subvols, old, sv_base)
+            elif opts.strategy  == "chronological":
+                send_subvol_chrono(sv, subvols, old, sv_base)
 
-    for sv in (x for x in subvols if x.parent_uuid is None):
-        if opts.strategy  == "snapshot":
-            send_subvol_snap(sv, subvols, old, dir_fn)
-        elif opts.strategy  == "chronological":
-            send_subvol_chrono(sv, subvols, old, dir_fn)
 
-    subvols.sort(key = lambda x: (x.parent_id, x.id))
-    done = set()
-    for sv in subvols:
-        move_to_tree_pos(sv, new, dir_fn, done)
 
-    if not opts.dry_run:
-        try:
-            os.rmdir(svbase)
-        except OSError:
-            print ("Failed to remove %s (this is non-fatal)" % svbase)
 
 def send_subvols(old_mnt, new_mnt):
     subvols = get_subvols(old_mnt)
