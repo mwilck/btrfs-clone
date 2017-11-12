@@ -258,7 +258,8 @@ def send_subvol_parent(subvol, get_parents, old, new):
                  send_flags = p_flags + c_flags)
 
 
-def parents_getter(lookup):
+def parents_getter(subvols):
+    lookup = { x.uuid: x for x in subvols }
     def _getter(x):
         p = []
         while x.parent_uuid is not None:
@@ -275,7 +276,7 @@ def send_subvols_parent(old_mnt, new_mnt, subvols):
     # A snapshot always has higher ogen than its source
     subvols.sort(key = lambda x: (x.ogen, x.id))
 
-    get_parents = parents_getter({ x.uuid: x for x in subvols })
+    get_parents = parents_getter(subvols)
     new_subvols = []
 
     for sv in subvols:
@@ -409,8 +410,10 @@ class SvBaseDir:
 
 def send_subvols_snap(old, new, subvols):
 
+    lookup = parents_getter(subvols)
     with SvBaseDir(new, subvols) as sv_base:
-        for sv in (x for x in subvols if x.parent_uuid is None):
+        for sv in (x for x in subvols if (x.parent_uuid is None or
+                                          lookup(x.parent_uuid) is None)):
             if opts.strategy  == "snapshot":
                 send_subvol_snap(sv, subvols, old, sv_base)
             elif opts.strategy  == "chronological":
