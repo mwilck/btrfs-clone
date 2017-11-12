@@ -258,11 +258,27 @@ def send_subvol_parent(subvol, get_parents, old, new):
                  send_flags = p_flags + c_flags)
 
 
+def parents_getter(lookup):
+    def _getter(x):
+        p = []
+        while x.parent_uuid is not None:
+            try:
+                x = lookup[x.parent_uuid]
+            except KeyError:
+                break
+            else:
+                p.append(x)
+        return p
+    return _getter
+
 def send_subvols_parent(old_mnt, new_mnt, subvols):
+    # A snapshot always has higher ogen than its source
+    subvols.sort(key = lambda x: (x.ogen, x.id))
+
     get_parents = parents_getter({ x.uuid: x for x in subvols })
     new_subvols = []
 
-    for sv in subvols[:2]:
+    for sv in subvols:
         send_subvol_parent(sv, get_parents, old_mnt, new_mnt)
         sv.set_ro(False, new_mnt)
         #if not opts.dry_run:
@@ -511,19 +527,6 @@ def send_subvols(old_mnt, new_mnt):
         send_subvols_snap(old_mnt, new_mnt, subvols)
     elif opts.strategy == "generation":
         send_subvols_gen(old_mnt, new_mnt, subvols)
-
-def parents_getter(lookup):
-    def _getter(x):
-        p = []
-        while x.parent_uuid is not None:
-            try:
-                x = lookup[x.parent_uuid]
-            except KeyError:
-                break
-            else:
-                p.append(x)
-        return p
-    return _getter
 
 def make_args():
     ps = ArgumentParser()
