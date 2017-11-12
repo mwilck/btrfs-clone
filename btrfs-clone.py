@@ -28,6 +28,7 @@ from uuid import uuid4
 from argparse import ArgumentParser
 from stat import ST_DEV
 from time import sleep
+import traceback
 
 opts = None
 VERBOSE = []
@@ -558,7 +559,7 @@ def parse_args():
     if opts.verbose is not None:
         VERBOSE = ["-v"] * opts.verbose
 
-if __name__ == "__main__":
+def main():
     parse_args()
 
     if not opts.no_unshare:
@@ -589,3 +590,12 @@ if __name__ == "__main__":
 
     new_mnt = send_root(old_mnt, new_mnt)
     send_subvols(old_mnt, new_mnt)
+
+if __name__ == "__main__":
+    try:
+        main()
+    except:
+        if opts.verbose > 1:
+            traceback.print_exc()
+        else:
+            print ("%s" % sys.exc_info()[1])
