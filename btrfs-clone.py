@@ -331,9 +331,15 @@ def move_to_tree_pos(sv, new, sv_base, done):
         try:
             check_call(["mv", "-f", cur, os.path.dirname(goal)])
         finally:
-            if sv.ro and os.path.isdir(cur):
+            if sv.ro:
                 try:
-                    prop_set_ro(cur, True)
+                    if os.path.isdir(goal):
+                        prop_set_ro(goal, True)
+                except:
+                    pass
+                try:
+                    if os.path.isdir(cur):
+                        prop_set_ro(cur, True)
                 except:
                     pass
         try:
