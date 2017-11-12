@@ -394,8 +394,105 @@ def send_subvols_snap(old, new, subvols):
             elif opts.strategy  == "chronological":
                 send_subvol_chrono(sv, subvols, old, sv_base)
 
+# "Static" subvolumes are such that have hardly changed since their
+# origin. This would be mostly ro snapshots. But we don't use the or
+# property here because it can be changed any time. Rather, we use
+# the difference between the generation and generation of origin, which
+# should be "small" for static subvolumes.
+def get_largest_static_element(sv, lst):
+    for s in reversed(lst):
+        gendiff = s.gen - s.ogen
+        # print ("stat %s %d %d" % (s, gendiff, sv.gen-s.ogen))
+        if gendiff < 100 or gendiff < (sv.gen - s.ogen) / 10:
+            return s
+    return None
 
+def get_parent(sv, subvols):
+    for s in subvols:
+        if s.uuid == sv.parent_uuid:
+            return s
+    return None
 
+def select_best_ancestor(sv, subvols, done):
+
+    def selection(best, reason):
+        if opts.verbose > 0:
+            print ("selected %s for %s, reason: %s" % (best, sv, reason))
+        return (best, True)
+
+    def candidate(best, reason):
+        if opts.verbose > 0:
+            print ("candidate %s for %s, reason: %s" % (best, sv, reason))
+        return (best, False)
+
+    siblings = []
+
+    # First, see if any snapshot of this one exist
+    children = [s for s in done if s.parent_uuid == sv.uuid]
+    best = get_largest_static_element(sv, children)
+
+    if best is not None:
+        return selection(best, "static child")
+
+    if sv.parent_uuid is not None:
+
+        # If our parent is older than ourselves, use it.
+        mom = get_parent(sv, done)
+        if mom is not None:
+            return selection(mom, "mom")
+
+        # Use the oldest of our static (snapshot) siblings
+        siblings = [s for s in done if s.parent_uuid == sv.parent_uuid]
+        best = get_largest_static_element(sv, siblings)
+        if best is not None:
+            return selection(best, "static sibling")
+
+        # Try if we find an ancestor that's older than us
+        # (mom was younger, it she may be an offspring of an older snapshot)
+        dad = get_parent(sv, subvols)
+        while dad is not None:
+            if dad.gen <= sv.gen:
+                return selection(dad, "dad")
+            dad = get_parent(dad, subvols)
+
+    if not opts.gen_use_candidates:
+        return None
+
+    # We've run out of good options. Check mediocre ones
+
+    # The oldest child was not "static", i.e. it has diverged from
+    # from the common history. But at least it's older than us.
+    if children != []:
+        return candidate(children[-1], "dynamic child")
+
+    # Likewise, look at non-static siblings (who are older than us
+    # and have a common parent)
+    if siblings != []:
+        return candidate(siblings[-1], "dynamic sibling")
+
+    return None
+
+def send_subvol_gen(sv, subvols, old, sv_base, done):
+    ret = select_best_ancestor(sv, subvols, done)
+
+    if ret is not None:
+        ancestor, good = ret
+        flags = ["-c", ancestor.get_path(old)]
+        if good:
+            flags = ["-p", ancestor.get_path(old)] + flags
+    else:
+        flags = []
+
+    sv_base.send(sv, old, flags)
+
+def send_subvols_gen(old, new, subvols):
+    subvols.sort(key = lambda x: (x.gen, x.id))
+
+    done = []
+    with SvBaseDir(new, subvols) as sv_base:
+        for sv in subvols:
+            send_subvol_gen(sv, subvols, old, sv_base, done)
+            done.append(sv)
 
 def send_subvols(old_mnt, new_mnt):
     subvols = get_subvols(old_mnt)
@@ -406,6 +503,8 @@ def send_subvols(old_mnt, new_mnt):
         send_subvols_parent(old_mnt, new_mnt, subvols)
     elif opts.strategy == "snapshot" or opts.strategy == "chronological":
         send_subvols_snap(old_mnt, new_mnt, subvols)
+    elif opts.strategy == "generation":
+        send_subvols_gen(old_mnt, new_mnt, subvols)
 
 def parents_getter(lookup):
     def _getter(x):
@@ -427,9 +526,11 @@ def make_args():
     ps.add_argument("-f", "--force", action='store_true')
     ps.add_argument("-n", "--dry-run", action='store_true')
     ps.add_argument("-s", "--strategy", default="snapshot",
-                    choices=["parent", "snapshot", "chronological"])
+                    choices=["parent", "snapshot", "chronological",
+                             "generation"])
     ps.add_argument("--snap-base")
     ps.add_argument("--no-unshare", action='store_true')
+    ps.add_argument("--gen-use-candidates", action='store_true')
     ps.add_argument("-t", "--toplevel", action='store_false',
                     help="clone toplevel into a subvolume")
     ps.add_argument("old")
