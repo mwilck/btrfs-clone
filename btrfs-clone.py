@@ -658,7 +658,7 @@ def make_args():
     ps.add_argument("-B", "--btrfs", default="btrfs")
     ps.add_argument("-f", "--force", action='store_true')
     ps.add_argument("-n", "--dry-run", action='store_true')
-    ps.add_argument("-s", "--strategy", default="snapshot",
+    ps.add_argument("-s", "--strategy", default="generation",
                     choices=["parent", "snapshot", "chronological",
                              "generation"])
     ps.add_argument("--snap-base")
