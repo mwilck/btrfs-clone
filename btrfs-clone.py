@@ -21,15 +21,15 @@
 import sys
 import re
 import os
-import subprocess
 import atexit
-import tempfile
-import gzip
+from subprocess import PIPE, Popen, CalledProcessError, check_call, check_output
+from tempfile import mkdtemp
+from gzip import open as gzopen
 from uuid import uuid4
 from argparse import ArgumentParser
 from stat import ST_DEV
 from time import sleep
-import traceback
+from traceback import print_exc
 
 opts = None
 VERBOSE = []
@@ -37,20 +37,19 @@ VERBOSE = []
 def randstr():
     return str(uuid4())[-12:]
 
-def check_call(*args, **kwargs):
+def maybe_call(*args, **kwargs):
     if opts.verbose:
         print (" ".join(args[0]))
     if not opts.dry_run:
-        subprocess.check_call(*args, **kwargs)
+        check_call(*args, **kwargs)
 
 def prop_get_ro(path, yesno):
-    info = subprocess.check_output([opts.btrfs, "property", "get", "-ts",
-                                    path, "ro"])
+    info = check_output([opts.btrfs, "property", "get", "-ts", path, "ro"])
     info = info.decode("ascii").rstrip()
     return info == "ro=true"
 
 def prop_set_ro(path, yesno):
-    check_call([opts.btrfs, "property", "set", "-ts",
+    maybe_call([opts.btrfs, "property", "set", "-ts",
                 path, "ro", "true" if yesno else "false"])
 
 class Subvol:
@@ -72,7 +71,7 @@ class Subvol:
         self._init_from_show()
 
     def _init_from_show(self):
-        info = subprocess.check_output([opts.btrfs, "subvolume", "show",
+        info = check_output([opts.btrfs, "subvolume", "show",
                                         "%s/%s" % (self.mnt, self.path)])
         for line in info.decode("ascii").split("\n"):
             try:
@@ -136,13 +135,12 @@ class Subvol:
         return prop_set_ro(self.get_path(mnt), yesno)
 
 def get_subvols(mnt):
-    vols = subprocess.check_output([opts.btrfs, "subvolume", "list",
-                                    "-t", "--sort=ogen",
-                                    mnt])
+    vols = check_output([opts.btrfs, "subvolume", "list",
+                         "-t", "--sort=ogen", mnt])
     svs = []
     for line in vols.decode("ascii").split("\n"):
         # Skip header lines
-        if line is "" or not line[0].isdigit():
+        if len(line) is 0 or not line[0].isdigit():
             continue
         try:
             sv = Subvol(mnt, line.split()[3])
@@ -156,17 +154,17 @@ def get_subvols(mnt):
 
 def umount_root_subvol(dir):
     try:
-        subprocess.check_call(["umount", "-l", dir])
+        check_call(["umount", "-l", dir])
         os.rmdir(dir)
     except:
         pass
 
 def mount_root_subvol(mnt):
-    td = tempfile.mkdtemp()
-    info = subprocess.check_output([opts.btrfs, "filesystem", "show", mnt])
+    td = mkdtemp()
+    info = check_output([opts.btrfs, "filesystem", "show", mnt])
     line = info.decode("ascii").split("\n")[0]
     uuid = re.search(r"uuid: (?P<uuid>[-a-f0-9]*)", line).group("uuid")
-    subprocess.check_call(["mount", "-o", "subvolid=5", "UUID=%s" % uuid, td])
+    check_call(["mount", "-o", "subvolid=5", "UUID=%s" % uuid, td])
     atexit.register(umount_root_subvol, td)
     return (uuid, td)
 
@@ -179,7 +177,7 @@ def set_all_ro(yesno, subvols, mnt = None):
     for sv in l:
         try:
             sv.set_ro(yesno, mnt = mnt)
-        except subprocess.CalledProcessError:
+        except CalledProcessError:
             if not yesno:
                 print ("Error setting ro=%s for %s: %s") % (
                     yesno, sv.path, sys.exc_info()[1])
@@ -191,15 +189,15 @@ def do_send_recv(old, new, send_flags=[]):
     send_cmd = ([opts.btrfs, "send"] + VERBOSE + send_flags + [old])
     recv_cmd = ([opts.btrfs, "receive"] + VERBOSE + [new])
 
-    if opts.verbose > 1:
+    if opts.verbose > 1 and not opts.dry_run:
         name = new.replace("/", "-")
         recv_name = "btrfs-recv-%s.log.gz" % name
         send_name = "btrfs-send-%s.log.gz" % name
-        recv_log = gzip.open(recv_name, "wb")
-        send_log = gzip.open(send_name, "wb")
+        recv_log = gzopen(recv_name, "wb")
+        send_log = gzopen(send_name, "wb")
     else:
-        recv_log = subprocess.PIPE
-        send_log = subprocess.PIPE
+        recv_log = PIPE
+        send_log = PIPE
 
     if opts.verbose:
         print ("%s |\n\t %s" % (" ".join(send_cmd), " ".join(recv_cmd)))
@@ -207,9 +205,9 @@ def do_send_recv(old, new, send_flags=[]):
         return
 
     try:
-        send = subprocess.Popen(send_cmd, stdout=subprocess.PIPE,
+        send = Popen(send_cmd, stdout=PIPE,
                                 stderr=send_log)
-        recv = subprocess.Popen(recv_cmd, stdin=send.stdout,
+        recv = Popen(recv_cmd, stdin=send.stdout,
                                 stderr=recv_log)
         send.stdout.close()
         recv.communicate()
@@ -233,12 +231,10 @@ def send_root(old, new):
     name = randstr()
     old_snap = "%s/%s" % (old, name)
     new_snap = "%s/%s" % (new, name)
-    subprocess.check_call([opts.btrfs, "subvolume", "snapshot", "-r",
-                           old, old_snap])
-    atexit.register(subprocess.check_call,
-                    [opts.btrfs, "subvolume", "delete", old_snap])
+    check_call([opts.btrfs, "subvolume", "snapshot", "-r", old, old_snap])
+    atexit.register(check_call, [opts.btrfs, "subvolume", "delete", old_snap])
     do_send_recv(old_snap, new)
-    check_call([opts.btrfs, "property", "set", new_snap, "ro", "false"])
+    maybe_call([opts.btrfs, "property", "set", new_snap, "ro", "false"])
 
     dir = old_snap if opts.dry_run else new_snap
     dev = os.lstat(dir)[ST_DEV]
@@ -249,152 +245,78 @@ def send_root(old, new):
             if dev != dev1:
                 continue
             # Can' use os.rename here (cross device link)
-            check_call(["mv", "-f", "-t", new] +
+            maybe_call(["mv", "-f", "-t", new] +
                        (["-v"] if opts.verbose else []) + [path])
-        check_call([opts.btrfs, "subvolume", "delete", new_snap])
+        maybe_call([opts.btrfs, "subvolume", "delete", new_snap])
         ret = new
     else:
         ret = new_snap
         print ("top level subvol in clone is: %s" % name)
     return ret
 
-def send_subvol_parent(subvol, get_parents, old, new):
-    ancestors = [[ "-c", x.get_path(old) ] for x in get_parents(subvol)]
-    c_flags = [x for anc in ancestors for x in anc]
-    if ancestors:
-        p_flags = [ "-p", ancestors[0][1] ]
-    else:
-        p_flags = []
-    do_send_recv(subvol.get_path(old), os.path.dirname(subvol.get_path(new)),
-                 send_flags = p_flags + c_flags)
 
+class SvBaseDir(object):
 
-def parents_getter(subvols):
-    lookup = { x.uuid: x for x in subvols }
-    def _getter(x):
-        while x.parent_uuid is not None:
-            try:
-                x = lookup[x.parent_uuid]
-            except KeyError:
-                return
-            else:
-                yield x
-    return _getter
-
-def send_subvols_parent(old_mnt, new_mnt, subvols):
-    # A snapshot always has higher ogen than its source
-    subvols.sort(key = lambda x: (x.ogen, x.id))
-
-    get_parents = parents_getter(subvols)
-    new_subvols = []
-
-    for sv in subvols:
-        send_subvol_parent(sv, get_parents, old_mnt, new_mnt)
-        sv.set_ro(False, new_mnt)
-        #if not opts.dry_run:
-        #    print (sv.ro_str(new_mnt))
-        new_subvols.append(sv)
-
-def send_subvol_chrono(sv, subvols, old, sv_base, parent=None):
-
-    snaps = [x for x in subvols if x.parent_uuid == sv.uuid]
-    snaps.sort(key = lambda x: (x.ogen, x.id))
-
-    prev = None
-    for snap in snaps:
-        send_subvol_chrono(snap, subvols, old, sv_base, parent=prev)
-        prev = snap
-
-    if parent is None:
-        parent = prev
-        prev = None
-    if parent is not None:
-        flags = [ "-p", parent.get_path(old), "-c", parent.get_path(old)]
-    else:
-        flags = []
-    if prev is not None:
-        flags += [ "-c", prev.get_path(old) ]
-
-    sv_base.send(sv, old, flags)
-
-def send_subvol_snap(sv, subvols, old, sv_base, parent=None):
-
-    if parent is not None:
-        flags = [ "-p", parent.get_path(old), "-c", parent.get_path(old)]
-    else:
-        flags = []
-
-    sv_base.send(sv, old, flags)
-
-    snaps = [x for x in subvols if x.parent_uuid == sv.uuid]
-    snaps.sort(reverse = True, key = lambda x: (x.ogen, x.id))
-
-    prev = sv
-    for snap in snaps:
-        send_subvol_snap(snap, subvols, old, sv_base, parent=prev)
-        prev = snap
-
-def move_to_tree_pos(sv, new, sv_base, done):
-    goal = sv.get_path(new)
-    last = os.path.basename(goal)
-    dir = sv_base.sv_dir(sv)
-    cur = "%s/%s" % (dir, last)
-
-    if opts.dry_run:
-        check_call(["mv", "-f", cur, os.path.dirname(goal)])
-        return
-
-    if not os.path.isdir(cur):
-        if os.path.isdir(goal):
-            print ("ah, %s already moved" % goal)
-            return True
-        else:
-            print ("ERROR: %s was not created" % cur)
-            return False
-    elif sv.parent_id == 5 or sv.parent_id in done:
-        if sv.ro:
-            prop_set_ro(cur, False)
-        try:
-            check_call(["mv", "-f", cur, os.path.dirname(goal)])
-        finally:
-            if sv.ro:
-                try:
-                    if os.path.isdir(goal):
-                        prop_set_ro(goal, True)
-                except:
-                    pass
-                try:
-                    if os.path.isdir(cur):
-                        prop_set_ro(cur, True)
-                except:
-                    pass
-        try:
-            os.rmdir(dir)
-        except OSError:
-            print ("Failed to remove %s (this is non-fatal)" % dir)
-        done.add(sv.id)
-        return True
-    else:
-        print ("Hmm, parent %d of %d not found" % (sv.parent_id, sv.id))
-        return False
-
-class SvBaseDir:
-    def __init__ (self, new, subvols):
+    def __init__ (self, strategy):
         self.base = "%s/%s" % (
-            new, opts.snap_base if opts.snap_base else randstr())
-        self.new = new
-        self.subvols = subvols
+            strategy.new, opts.snap_base if opts.snap_base else randstr())
+        self.new = strategy.new
+        self.subvols = strategy.subvols
 
     def __enter__(self):
         if not opts.dry_run and not os.path.isdir(self.base):
             os.mkdir(self.base)
         return self
 
+    def move_to_tree_pos(self, sv, done):
+
+        goal = sv.get_path(self.new)
+        last = os.path.basename(goal)
+        dir = self.sv_dir(sv)
+        cur = "%s/%s" % (dir, last)
+
+        if opts.dry_run:
+            maybe_call(["mv", "-f", cur, os.path.dirname(goal)])
+            return
+
+        if not os.path.isdir(cur):
+            if os.path.isdir(goal):
+                return True
+            else:
+                print ("ERROR: %s has not been created" % cur)
+                return False
+        elif sv.parent_id == 5 or sv.parent_id in done:
+            if sv.ro:
+                prop_set_ro(cur, False)
+            try:
+                maybe_call(["mv", "-f", cur, os.path.dirname(goal)])
+            finally:
+                if sv.ro:
+                    try:
+                        if os.path.isdir(goal):
+                            prop_set_ro(goal, True)
+                    except:
+                        pass
+                    try:
+                        if os.path.isdir(cur):
+                            prop_set_ro(cur, True)
+                    except:
+                        pass
+            try:
+                os.rmdir(dir)
+            except OSError:
+                print ("Failed to remove %s (this is non-fatal)" % dir)
+            done.add(sv.id)
+            return True
+        else:
+            print ("Hmm, parent %d of %d not found" % (sv.parent_id, sv.id))
+            return False
+
     def __exit__(self, *args):
         self.subvols.sort(key = lambda x: (x.parent_id, x.id))
         done = set()
         for sv in self.subvols:
-            move_to_tree_pos(sv, self.new, self, done)
+            self.move_to_tree_pos(sv, done)
         if not opts.dry_run:
             try:
                 os.rmdir(self.base)
@@ -417,22 +339,141 @@ class SvBaseDir:
             if not sv.ro and not opts.dry_run:
                 prop_set_ro(newpath, False)
 
-def send_subvols_snap(old, new, subvols):
+def parents_getter(subvols):
+    lookup = { x.uuid: x for x in subvols }
+    def _getter(x):
+        while x.parent_uuid is not None:
+            try:
+                x = lookup[x.parent_uuid]
+            except KeyError:
+                return
+            else:
+                yield x
+    return _getter
 
-    lookup = parents_getter(subvols)
-    with SvBaseDir(new, subvols) as sv_base:
-        for sv in (x for x in subvols if (x.parent_uuid is None or
-                                          lookup(x.parent_uuid) is None)):
-            if opts.strategy  == "snapshot":
-                send_subvol_snap(sv, subvols, old, sv_base)
-            elif opts.strategy  == "chronological":
-                send_subvol_chrono(sv, subvols, old, sv_base)
+class Strategy(object):
 
-def get_parent(sv, subvols):
-    for s in subvols:
-        if s.uuid == sv.parent_uuid:
-            return s
-    return None
+    @staticmethod
+    def sort_key(sv):
+        # this works for parent strategy because snapshots always have
+        #  higher ogen thenc their parents
+        return (sv.ogen, sv.id)
+
+    def __init__(self, old, new):
+        self.old = old
+        self.new = new
+        print ("Using cloning strategy %s" % self.__class__.__name__)
+
+    def send_subvol(self, sv):
+        pass
+
+    def prepare_subvols(self):
+        self.subvols = get_subvols(self.old)
+        self.get_parents = parents_getter(self.subvols)
+        self.subvols.sort(key = self.sort_key)
+
+        atexit.register(set_all_ro, False, self.subvols, self.old)
+        set_all_ro(True, self.subvols, self.old)
+
+    def build_flags(self, clone_sources, best):
+        flags = [f for c in clone_sources for f in ("-c", c.get_path(self.old))]
+        if best is not None:
+            flags += ["-p", best.get_path(self.old)]
+        return flags
+
+    def _select_subvols(self):
+        return self.subvols
+
+    def _prep(self):
+        pass
+
+    def _done(self, sv):
+        pass
+
+    def _send_subvols(self):
+        for sv in self._select_subvols():
+            self.send_subvol(sv)
+            self._done(sv)
+
+    def strategy(self):
+        # Subclasses can do more stuff here
+        self._send_subvols()
+
+    def send_subvols(self):
+        self.prepare_subvols()
+        self._prep()
+        self.strategy()
+
+class ParentStrategy(Strategy):
+
+    def send_subvol(self, sv):
+        ancestors = list(self.get_parents(sv))
+        flags = self.build_flags(ancestors,
+                                 ancestors[0] if ancestors else None)
+        do_send_recv(sv.get_path(self.old),
+                     os.path.dirname(sv.get_path(self.new)),
+                     flags)
+
+    def _done(self, sv):
+        sv.set_ro(False, self.new)
+
+class _FlatStrategy(Strategy):
+
+    def strategy(self):
+        # This with statement takes care for build-up and teardown
+        # of the temporary flat dir holding the subvol clones
+        with SvBaseDir(self) as sv_base:
+            self.sv_base = sv_base
+            self._send_subvols()
+
+class SnapStrategy(_FlatStrategy):
+
+    def get_children(self, sv):
+        return [x for x in self.subvols if x.parent_uuid == sv.uuid]
+
+    def walk_children(self, prev, snaps):
+        for snap in snaps:
+            self.send_subvol(snap, parent=prev)
+            prev = snap
+        return prev
+
+    def send_subvol(self, sv, parent=None):
+
+        flags = self.build_flags([parent], parent) if parent is not None else []
+        self.sv_base.send(sv, self.old, flags)
+
+        snaps = self.get_children(sv)
+        snaps.sort(reverse = True, key = self.sort_key)
+
+        self.walk_children(sv, snaps)
+
+    def _select_subvols(self):
+        return (x for x in self.subvols
+                if (x.parent_uuid is None or
+                    not [y for y in self.subvols if y.uuid == x.parent_uuid]))
+
+class ChronoStrategy(SnapStrategy):
+
+    def send_subvol(self, sv, parent=None):
+
+        snaps = self.get_children(sv)
+        snaps.sort(key = self.sort_key)
+
+        prev = self.walk_children(None, snaps)
+
+        clone_sources = []
+        best = None
+        if parent is not None:
+            clone_sources.append(parent)
+            if prev is not None:
+                clone_sources.append(prev)
+            best = parent
+        elif prev is not None:
+            clone_sources = [prev]
+            best = prev
+
+        flags = self.build_flags(clone_sources, best)
+        self.sv_base.send(sv, self.old, flags)
 
 def get_first(lst, fn):
     for x in (y for y in lst if fn(y)):
@@ -455,203 +496,199 @@ def pr_list(msg,lst):
     if opts.verbose > 1:
         print ("%s: %s" % (msg, ", ".join(str(x) for x in lst)))
 
-def select_best_ancestor(sv, get_ancestors, done):
+class GenerationStrategy(_FlatStrategy):
 
-    # Consider the following history tree.
-    #
-    # Lines denote evolvement of a subvolume in time.
-    # Crosses are "forks" (creation of r/w subvolumes).
-    # "*" denotes "static" (ro) snapshots, "o" non-static (rw).
-    # Generation increases vertically top-down.
-    #
-    #                                   |
-    #                    /--------------+ (5)
-    #                    |              |
-    #         /----------+              G
-    #         |          |
-    #         |          * a
-    #         |          |
-    #         |        3 +--------\
-    #       e o          |        |
-    #             /------+ 1      |
-    #             |      |        |
-    #             |    4 +---\    o b
-    #             |      |   |
-    #             |      |   o c
-    #        /--- + 2    |
-    #        |    |      * d
-    #        |    |      |
-    #      C o    |      |
-    #             |      o M
-    #             |
-    #             o S
-    #
-    # We are looking at S. C is a snapshot of S, M is a snaphot of G.
-    # All other subvolumes (including S itself) are snapshots of (some
-    # former state of) M.
-    #
-    # IOW: M is "mom" of S, C a child of S, G "grandma" of S,
-    # all others are siblings of S (being snapshots of M).
-    #
-    # Because "generation" strategy cloes subvols ordered by generation
-    # all nodes except S have already been cloned.
-    #
-    # Which subvols should be used as clone sources, and which one
-    # of them should be the best "parent" for btrfs-send? btrfs-receive
-    # will create a snapshot of the "parent" on the target side, and
-    # modify this snapshot, using data from all clone sources, until
-    # it matches S. If we included all nodes except S in the set of
-    # clone sources and didn't set "-p" explicitly, btrfs-send would
-    # choose M as parent.
+    @staticmethod
+    def sort_key(sv):
+        return (sv.gen, sv.id)
 
-    def selection(best, reason):
-        clone_sources.add(best)
-        if None in clone_sources:
-            clone_sources.remove(None)
-        if opts.verbose > 0:
-            print("%s <= %s (reason: %s); %s" %
-                  (sv, best, reason,
-                   ", ".join(str(s) for s in clone_sources)))
-        return (best, clone_sources)
+    def select_best_ancestor(self, sv):
 
-    # "done" should be sorted by gen already because of the way it's build
-    # up in send_subvols_gen(), but let's be paranoid
-    done.sort(key = lambda x: (x.gen, x.id), reverse=True)
+        # Consider the following history tree.
+        #
+        # Lines denote evolvement of a subvolume in time.
+        # Crosses are "forks" (creation of r/w subvolumes).
+        # "*" denotes "static" (ro) snapshots, "o" non-static (rw).
+        # Generation increases vertically top-down.
+        #
+        #                                   |
+        #                    /--------------+ (5)
+        #                    |              |
+        #         /----------+              G
+        #         |          |
+        #         |          * a
+        #         |          |
+        #         |        3 +--------\
+        #       e o          |        |
+        #             /------+ 1      |
+        #             |      |        |
+        #             |    4 +---\    o b
+        #             |      |   |
+        #             |      |   o c
+        #        /--- + 2    |
+        #        |    |      * d
+        #        |    |      |
+        #      C o    |      |
+        #             |      o M
+        #             |
+        #             o S
+        #
+        # We are looking at S. C is a snapshot of S, M is a snaphot of G.
+        # All other subvolumes (including S itself) are snapshots of (some
+        # former state of) M.
+        #
+        # IOW: M is "mom" of S, C a child of S, G "grandma" of S,
+        # all others are siblings of S (being snapshots of M).
+        #
+        # Because "generation" strategy cloes subvols ordered by generation
+        # all nodes except S have already been cloned.
+        #
+        # Which subvols should be used as clone sources, and which one
+        # of them should be the best "parent" for btrfs-send? btrfs-receive
+        # will create a snapshot of the "parent" on the target side, and
+        # modify this snapshot, using data from all clone sources, until
+        # it matches S. If we included all nodes except S in the set of
+        # clone sources and didn't set "-p" explicitly, btrfs-send would
+        # choose M as parent.
 
-    clone_sources = set()
-    best_static_child = None
-    mom = ancestor = None
+        def selection(best, reason):
+            clone_sources.add(best)
+            if None in clone_sources:
+                clone_sources.remove(None)
+            if opts.verbose > 0:
+                print("%s <= %s (reason: %s); %s" %
+                      (sv, best, reason,
+                       ", ".join(str(s) for s in clone_sources)))
+            return (best, clone_sources)
 
-    children = [s for s in done if s.parent_uuid == sv.uuid]
-    pr_list("children of %s" % sv, children)
-    if children:
-        best_static_child = get_first(children, lambda x: x.is_static())
-        if best_static_child is not None:
-            clone_sources.union([x for x in children
-                                 if x.ogen > best_static_child.ogen])
-            return selection(best_static_child, "static child")
-        else:
-            # non-static children can be VERY different, don't use as "best"
-            clone_sources.update(children)
+        # self.done should be sorted by gen already because of the way it's
+        # built up in send_subvols(), but let's be paranoid
+        self.done.sort(key = self.sort_key, reverse=True)
 
-    # a parent's gen is not necessarily lower than the child's gen
-    # but there may be older ancestors (grandparents etc.) with lower gen
-    # Get the one that's closed to us in terms of ogen
-    ancestors = [ x for x in get_ancestors(sv) ]
-    pr_list("ancestors of %s" % sv, ancestors)
-    if ancestors:
-        # node M in tree above
-        mom = ancestors[0]
-        # node G in tree above
-        ancestor = get_max(ancestors, lambda x: x in done,
-                           lambda x: x.ogen)
-        if ancestor is not None:
-            clone_sources.add(ancestor)
-            if ancestor is mom:
-                return selection(mom, "mom")
-        siblings = [x for x in done if x.parent_uuid == mom.uuid]
-        pr_list("siblings of %s" % sv, siblings)
-    else:
-        siblings = []
+        clone_sources = set()
+        best_static_child = None
+        mom = ancestor = None
 
-    # There may be more siblings, but we look only at those that
-    # are cloned already (are members of done)
-    if not siblings:
-        if ancestor is not None:
-            return selection(ancestor, "ancestor")
-        else:
-            return selection(None, "orphan")
+        children = [s for s in self.done if s.parent_uuid == sv.uuid]
+        pr_list("children of %s" % sv, children)
+        if children:
+            best_static_child = get_first(children, lambda x: x.is_static())
+            if best_static_child is not None:
+                clone_sources.union([x for x in children
+                                     if x.ogen > best_static_child.ogen])
+                return selection(best_static_child, "static child")
+            else:
+                # non-static children can be VERY different, don't use as "best"
+                clone_sources.update(children)
 
-    # Don't call me a sexist please... This is easier to remember
-    # and less confusing than "older_siblings" etc.
-    brothers = [x for x in siblings if x.ogen < sv.ogen]
-    pr_list("brothers of %s" % sv, brothers)
-    sisters = [x for x in siblings if x.ogen >= sv.ogen]
-    pr_list("sisters of %s" % sv, sisters)
-
-    # node a in tree above
-    youngest_static_brother = get_max(brothers, lambda x: x.is_static(),
-                                      lambda x: x.ogen)
-    # also node a
-    youngest_brother = get_max(brothers, lambda x: x.gen < sv.ogen,
+        # a parent's gen is not necessarily lower than the child's gen
+        # but there may be older ancestors (grandparents etc.) with lower gen
+        # Get the one that's closed to us in terms of ogen
+        ancestors = [ x for x in self.get_parents(sv) ]
+        pr_list("ancestors of %s" % sv, ancestors)
+        if ancestors:
+            # node M in tree above
+            mom = ancestors[0]
+            # node G in tree above
+            ancestor = get_max(ancestors, lambda x: x in self.done,
                                lambda x: x.ogen)
-    # node b
-    youngest_brother_ogen = get_max(brothers, lambda x: True,
-                                    lambda x: x.ogen)
+            if ancestor is not None:
+                clone_sources.add(ancestor)
+                if ancestor is mom:
+                    return selection(mom, "mom")
+            siblings = [x for x in self.done if x.parent_uuid == mom.uuid]
+            pr_list("siblings of %s" % sv, siblings)
+        else:
+            siblings = []
 
-    # node d
-    oldest_static_sister = get_min(sisters, lambda x: x.is_static(),
+        # There may be more siblings, but we look only at those that
+        # are cloned already (are members of self.done)
+        if not siblings:
+            if ancestor is not None:
+                return selection(ancestor, "ancestor")
+            else:
+                return selection(None, "orphan")
+
+        # Don't call me a sexist please... This is easier to remember
+        # and less confusing than "older_siblings" etc.
+        brothers = [x for x in siblings if x.ogen < sv.ogen]
+        pr_list("brothers of %s" % sv, brothers)
+        sisters = [x for x in siblings if x.ogen >= sv.ogen]
+        pr_list("sisters of %s" % sv, sisters)
+
+        # node a in tree above
+        youngest_static_brother = get_max(brothers, lambda x: x.is_static(),
+                                          lambda x: x.ogen)
+        # also node a
+        youngest_brother = get_max(brothers, lambda x: x.gen < sv.ogen,
                                    lambda x: x.ogen)
-    # node c
-    oldest_sister = get_min(sisters, lambda x: True,
-                            lambda x: x.ogen)
+        # node b
+        youngest_brother_ogen = get_max(brothers, lambda x: True,
+                                        lambda x: x.ogen)
 
-    # also node c
-    oldest_sister_gen = get_min(sisters, lambda x: True,
-                                lambda x: x.gen)
+        # node d
+        oldest_static_sister = get_min(sisters, lambda x: x.is_static(),
+                                       lambda x: x.ogen)
+        # node c
+        oldest_sister = get_min(sisters, lambda x: True,
+                                lambda x: x.ogen)
 
-    # By using a set here, we automatically avoid duplicates.
-    # "None" is removed in selection()
-    clone_sources.add(youngest_static_brother)
-    clone_sources.add(youngest_brother)
-    clone_sources.add(youngest_brother_ogen)
-    clone_sources.add(oldest_static_sister)
-    clone_sources.add(oldest_sister)
-    clone_sources.add(oldest_sister_gen)
+        # also node c
+        oldest_sister_gen = get_min(sisters, lambda x: True,
+                                    lambda x: x.gen)
 
-    if youngest_static_brother is not None:
-        return selection(youngest_static_brother, "static brother")
+        # By using a set here, we automatically avoid duplicates.
+        # "None" is removed in selection()
+        clone_sources.add(youngest_static_brother)
+        clone_sources.add(youngest_brother)
+        clone_sources.add(youngest_brother_ogen)
+        clone_sources.add(oldest_static_sister)
+        clone_sources.add(oldest_sister)
+        clone_sources.add(oldest_sister_gen)
 
-    if oldest_static_sister is not None:
-        return selection(oldest_static_sister, "static sister")
+        if youngest_static_brother is not None:
+            return selection(youngest_static_brother, "static brother")
 
-    if youngest_brother is not None:
-        return selection(youngest_brother, "youngest brother")
+        if oldest_static_sister is not None:
+            return selection(oldest_static_sister, "static sister")
 
-    if ancestor is not None and ancestor.is_static():
-        return selection(ancestor, "static ancestor")
+        if youngest_brother is not None:
+            return selection(youngest_brother, "youngest brother")
 
-    candidates = set([ancestor, youngest_brother_ogen,
-                      oldest_sister, oldest_sister_gen])
-    if None in candidates:
-        candidates.remove(None)
+        if ancestor is not None and ancestor.is_static():
+            return selection(ancestor, "static ancestor")
 
-    if candidates:
-        return selection(min(candidates, key = lambda x: abs(x.ogen - sv.ogen)),
-                         "nicest relative")
+        candidates = set([ancestor, youngest_brother_ogen,
+                          oldest_sister, oldest_sister_gen])
+        if None in candidates:
+            candidates.remove(None)
 
-    return selection(None, "no nice relatives")
+        if candidates:
+            return selection(min(candidates,
+                                 key = lambda x: abs(x.ogen - sv.ogen)),
+                             "nicest relative")
 
-def send_subvol_gen(sv, get_ancestors, old, sv_base, done):
-    (best, clone_sources) = select_best_ancestor(sv, get_ancestors, done)
+        return selection(None, "no nice relatives")
 
-    flags = [f for c in clone_sources for f in ("-c", c.get_path(old))]
-    if best is not None:
-        flags += ["-p", best.get_path(old)]
+    def send_subvol(self, sv):
+        (best, clone_sources) = self.select_best_ancestor(sv)
+        self.sv_base.send(sv, self.old, self.build_flags(clone_sources, best))
 
-    sv_base.send(sv, old, flags)
+    def _prep(self):
+        self.done = []
 
-def send_subvols_gen(old, new, subvols):
-    subvols.sort(key = lambda x: (x.gen, x.id))
-    get_ancestors = parents_getter(subvols)
+    def _done(self, sv):
+        self.done = [sv] + self.done
 
-    done = []
-    with SvBaseDir(new, subvols) as sv_base:
-        for sv in subvols:
-            send_subvol_gen(sv, get_ancestors, old, sv_base, done)
-            done = [sv] + done
 
-def send_subvols(old_mnt, new_mnt):
-    subvols = get_subvols(old_mnt)
-    atexit.register(set_all_ro, False, subvols, old_mnt)
-    set_all_ro(True, subvols, old_mnt)
-
-    if opts.strategy == "parent":
-        send_subvols_parent(old_mnt, new_mnt, subvols)
-    elif opts.strategy == "snapshot" or opts.strategy == "chronological":
-        send_subvols_snap(old_mnt, new_mnt, subvols)
-    elif opts.strategy == "generation":
-        send_subvols_gen(old_mnt, new_mnt, subvols)
+def get_strategy():
+    _strategies = {
+        "parent": ParentStrategy,
+        "snapshot": SnapStrategy,
+        "chronological": ChronoStrategy,
+        "generation": GenerationStrategy,
+    }
+    return _strategies[opts.strategy]
 
 def make_args():
     ps = ArgumentParser()
@@ -709,13 +746,13 @@ def main():
         print ("NEW btrfs %s mounted on %s" % (new_uuid, new_mnt))
 
     new_mnt = send_root(old_mnt, new_mnt)
-    send_subvols(old_mnt, new_mnt)
+    get_strategy()(old_mnt, new_mnt).send_subvols()
 
 if __name__ == "__main__":
     try:
         main()
     except:
-        if opts.verbose > 1:
-            traceback.print_exc()
+        if opts is None or opts.verbose > 1:
+            print_exc()
         else:
             print ("%s" % sys.exc_info()[1])
