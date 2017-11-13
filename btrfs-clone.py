@@ -232,7 +232,8 @@ def send_root(old, new):
     name = randstr()
     old_snap = "%s/%s" % (old, name)
     new_snap = "%s/%s" % (new, name)
-    subprocess.check_call([opts.btrfs, "subvolume", "snapshot", "-r", old, old_snap])
+    subprocess.check_call([opts.btrfs, "subvolume", "snapshot", "-r",
+                           old, old_snap])
     atexit.register(subprocess.check_call,
                     [opts.btrfs, "subvolume", "delete", old_snap])
     do_send_recv(old_snap, new)
