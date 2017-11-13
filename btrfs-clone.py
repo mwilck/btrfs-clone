@@ -53,6 +53,11 @@ def prop_set_ro(path, yesno):
                 path, "ro", "true" if yesno else "false"])
 
 class Subvol:
+
+    # Max diff between "generation" and "generation of origin" which
+    # is considered "static" (aka read-only snapshot)
+    MAX_STATIC = 1
+
     class NoSubvol(ValueError):
         pass
     class BadId(RuntimeError):
@@ -97,7 +102,10 @@ class Subvol:
                 raise self.MissingAttr("%s: no %s" % (self, attr))
 
     def __str__(self):
-        return (("subvol %d at \"%s\"") % (self.id, self.path))
+        return ("%s(%d)" % (self.path, self.id))
+
+    def is_static(self):
+        return (self.gen - self.ogen <= self.MAX_STATIC)
 
     def longstr(self):
         return (("subvol %d gen %d->%d %s UUID=%s ro:%s" +
