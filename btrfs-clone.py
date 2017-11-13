@@ -270,15 +270,13 @@ def send_subvol_parent(subvol, get_parents, old, new):
 def parents_getter(subvols):
     lookup = { x.uuid: x for x in subvols }
     def _getter(x):
-        p = []
         while x.parent_uuid is not None:
             try:
                 x = lookup[x.parent_uuid]
             except KeyError:
-                break
+                return
             else:
-                p.append(x)
-        return p
+                yield x
     return _getter
 
 def send_subvols_parent(old_mnt, new_mnt, subvols):
