@@ -426,105 +426,218 @@ def send_subvols_snap(old, new, subvols):
             elif opts.strategy  == "chronological":
                 send_subvol_chrono(sv, subvols, old, sv_base)
 
-# "Static" subvolumes are such that have hardly changed since their
-# origin. This would be mostly ro snapshots. But we don't use the or
-# property here because it can be changed any time. Rather, we use
-# the difference between the generation and generation of origin, which
-# should be "small" for static subvolumes.
-def get_largest_static_element(sv, lst):
-    for s in reversed(lst):
-        gendiff = s.gen - s.ogen
-        # print ("stat %s %d %d" % (s, gendiff, sv.gen-s.ogen))
-        if gendiff < 100 or gendiff < (sv.gen - s.ogen) / 10:
-            return s
-    return None
-
 def get_parent(sv, subvols):
     for s in subvols:
         if s.uuid == sv.parent_uuid:
             return s
     return None
 
-def select_best_ancestor(sv, subvols, done):
-
-    def selection(best, reason):
-        if opts.verbose > 0:
-            print ("selected %s for %s, reason: %s" % (best, sv, reason))
-        return (best, True)
-
-    def candidate(best, reason):
-        if opts.verbose > 0:
-            print ("candidate %s for %s, reason: %s" % (best, sv, reason))
-        return (best, False)
-
-    siblings = []
-
-    # First, see if any snapshot of this one exist
-    children = [s for s in done if s.parent_uuid == sv.uuid]
-    best = get_largest_static_element(sv, children)
-
-    if best is not None:
-        return selection(best, "static child")
-
-    if sv.parent_uuid is not None:
-
-        # If our parent is older than ourselves, use it.
-        mom = get_parent(sv, done)
-        if mom is not None:
-            return selection(mom, "mom")
-
-        # Use the oldest of our static (snapshot) siblings
-        siblings = [s for s in done if s.parent_uuid == sv.parent_uuid]
-        best = get_largest_static_element(sv, siblings)
-        if best is not None:
-            return selection(best, "static sibling")
-
-        # Try if we find an ancestor that's older than us
-        # (mom was younger, it she may be an offspring of an older snapshot)
-        dad = get_parent(sv, subvols)
-        while dad is not None:
-            if dad.gen <= sv.gen:
-                return selection(dad, "dad")
-            dad = get_parent(dad, subvols)
-
-    if not opts.gen_use_candidates:
-        return None
-
-    # We've run out of good options. Check mediocre ones
-
-    # The oldest child was not "static", i.e. it has diverged from
-    # from the common history. But at least it's older than us.
-    if children != []:
-        return candidate(children[-1], "dynamic child")
-
-    # Likewise, look at non-static siblings (who are older than us
-    # and have a common parent)
-    if siblings != []:
-        return candidate(siblings[-1], "dynamic sibling")
-
+def get_first(lst, fn):
+    for x in (y for y in lst if fn(y)):
+        return x
     return None
 
-def send_subvol_gen(sv, subvols, old, sv_base, done):
-    ret = select_best_ancestor(sv, subvols, done)
+def get_max(lst, sel, key):
+    l = [y for y in lst if sel(y)]
+    if not l:
+        return None
+    return max(l, key = key)
 
-    if ret is not None:
-        ancestor, good = ret
-        flags = ["-c", ancestor.get_path(old)]
-        if good:
-            flags = ["-p", ancestor.get_path(old)] + flags
+def get_min(lst, sel, key):
+    l = [y for y in lst if sel(y)]
+    if not l:
+        return None
+    return min(l, key = key)
+
+def pr_list(msg,lst):
+    if opts.verbose > 1:
+        print ("%s: %s" % (msg, ", ".join(str(x) for x in lst)))
+
+def select_best_ancestor(sv, get_ancestors, done):
+
+    # Consider the following history tree.
+    #
+    # Lines denote evolvement of a subvolume in time.
+    # Crosses are "forks" (creation of r/w subvolumes).
+    # "*" denotes "static" (ro) snapshots, "o" non-static (rw).
+    # Generation increases vertically top-down.
+    #
+    #                                   |
+    #                    /--------------+ (5)
+    #                    |              |
+    #         /----------+              G
+    #         |          |
+    #         |          * a
+    #         |          |
+    #         |        3 +--------\
+    #       e o          |        |
+    #             /------+ 1      |
+    #             |      |        |
+    #             |    4 +---\    o b
+    #             |      |   |
+    #             |      |   o c
+    #        /--- + 2    |
+    #        |    |      * d
+    #        |    |      |
+    #      C o    |      |
+    #             |      o M
+    #             |
+    #             o S
+    #
+    # We are looking at S. C is a snapshot of S, M is a snaphot of G.
+    # All other subvolumes (including S itself) are snapshots of (some
+    # former state of) M.
+    #
+    # IOW: M is "mom" of S, C a child of S, G "grandma" of S,
+    # all others are siblings of S (being snapshots of M).
+    #
+    # Because "generation" strategy cloes subvols ordered by generation
+    # all nodes except S have already been cloned.
+    #
+    # Which subvols should be used as clone sources, and which one
+    # of them should be the best "parent" for btrfs-send? btrfs-receive
+    # will create a snapshot of the "parent" on the target side, and
+    # modify this snapshot, using data from all clone sources, until
+    # it matches S. If we included all nodes except S in the set of
+    # clone sources and didn't set "-p" explicitly, btrfs-send would
+    # choose M as parent.
+
+    def selection(best, reason):
+        clone_sources.add(best)
+        if None in clone_sources:
+            clone_sources.remove(None)
+        if opts.verbose > 0:
+            print("%s <= %s (reason: %s); %s" %
+                  (sv, best, reason,
+                   ", ".join(str(s) for s in clone_sources)))
+        return (best, clone_sources)
+
+    # "done" should be sorted by gen already because of the way it's build
+    # up in send_subvols_gen(), but let's be paranoid
+    done.sort(key = lambda x: (x.gen, x.id), reverse=True)
+
+    clone_sources = set()
+    best_static_child = None
+    mom = ancestor = None
+
+    children = [s for s in done if s.parent_uuid == sv.uuid]
+    pr_list("children of %s" % sv, children)
+    if children:
+        best_static_child = get_first(children, lambda x: x.is_static())
+        if best_static_child is not None:
+            clone_sources.union([x for x in children
+                                 if x.ogen > best_static_child.ogen])
+            return selection(best_static_child, "static child")
+        else:
+            # non-static children can be VERY different, don't use as "best"
+            clone_sources.update(children)
+
+    # a parent's gen is not necessarily lower than the child's gen
+    # but there may be older ancestors (grandparents etc.) with lower gen
+    # Get the one that's closed to us in terms of ogen
+    ancestors = [ x for x in get_ancestors(sv) ]
+    pr_list("ancestors of %s" % sv, ancestors)
+    if ancestors:
+        # node M in tree above
+        mom = ancestors[0]
+        # node G in tree above
+        ancestor = get_max(ancestors, lambda x: x in done,
+                           lambda x: x.ogen)
+        if ancestor is not None:
+            clone_sources.add(ancestor)
+            if ancestor is mom:
+                return selection(mom, "mom")
+        siblings = [x for x in done if x.parent_uuid == mom.uuid]
+        pr_list("siblings of %s" % sv, siblings)
     else:
-        flags = []
+        siblings = []
+
+    # There may be more siblings, but we look only at those that
+    # are cloned already (are members of done)
+    if not siblings:
+        if ancestor is not None:
+            return selection(ancestor, "ancestor")
+        else:
+            return selection(None, "orphan")
+
+    # Don't call me a sexist please... This is easier to remember
+    # and less confusing than "older_siblings" etc.
+    brothers = [x for x in siblings if x.ogen < sv.ogen]
+    pr_list("brothers of %s" % sv, brothers)
+    sisters = [x for x in siblings if x.ogen >= sv.ogen]
+    pr_list("sisters of %s" % sv, sisters)
+
+    # node a in tree above
+    youngest_static_brother = get_max(brothers, lambda x: x.is_static(),
+                                      lambda x: x.ogen)
+    # also node a
+    youngest_brother = get_max(brothers, lambda x: x.gen < sv.ogen,
+                               lambda x: x.ogen)
+    # node b
+    youngest_brother_ogen = get_max(brothers, lambda x: True,
+                                    lambda x: x.ogen)
+
+    # node d
+    oldest_static_sister = get_min(sisters, lambda x: x.is_static(),
+                                   lambda x: x.ogen)
+    # node c
+    oldest_sister = get_min(sisters, lambda x: True,
+                            lambda x: x.ogen)
+
+    # also node c
+    oldest_sister_gen = get_min(sisters, lambda x: True,
+                                lambda x: x.gen)
+
+    # By using a set here, we automatically avoid duplicates.
+    # "None" is removed in selection()
+    clone_sources.add(youngest_static_brother)
+    clone_sources.add(youngest_brother)
+    clone_sources.add(youngest_brother_ogen)
+    clone_sources.add(oldest_static_sister)
+    clone_sources.add(oldest_sister)
+    clone_sources.add(oldest_sister_gen)
+
+    if youngest_static_brother is not None:
+        return selection(youngest_static_brother, "static brother")
+
+    if oldest_static_sister is not None:
+        return selection(oldest_static_sister, "static sister")
+
+    if youngest_brother is not None:
+        return selection(youngest_brother, "youngest brother")
+
+    if ancestor is not None and ancestor.is_static():
+        return selection(ancestor, "static ancestor")
+
+    candidates = set([ancestor, youngest_brother_ogen,
+                      oldest_sister, oldest_sister_gen])
+    if None in candidates:
+        candidates.remove(None)
+
+    if candidates:
+        return selection(min(candidates, key = lambda x: abs(x.ogen - sv.ogen)),
+                         "nicest relative")
+
+    return selection(None, "no nice relatives")
+
+def send_subvol_gen(sv, get_ancestors, old, sv_base, done):
+    (best, clone_sources) = select_best_ancestor(sv, get_ancestors, done)
+
+    flags = [f for c in clone_sources for f in ("-c", c.get_path(old))]
+    if best is not None:
+        flags += ["-p", best.get_path(old)]
 
     sv_base.send(sv, old, flags)
 
 def send_subvols_gen(old, new, subvols):
     subvols.sort(key = lambda x: (x.gen, x.id))
+    get_ancestors = parents_getter(subvols)
 
     done = []
     with SvBaseDir(new, subvols) as sv_base:
         for sv in subvols:
-            send_subvol_gen(sv, subvols, old, sv_base, done)
-            done.append(sv)
+            send_subvol_gen(sv, get_ancestors, old, sv_base, done)
+            done = [sv] + done
 
 def send_subvols(old_mnt, new_mnt):
     subvols = get_subvols(old_mnt)
@@ -549,7 +662,6 @@ def make_args():
                              "generation"])
     ps.add_argument("--snap-base")
     ps.add_argument("--no-unshare", action='store_true')
-    ps.add_argument("--gen-use-candidates", action='store_true')
     ps.add_argument("-t", "--toplevel", action='store_false',
                     help="clone toplevel into a subvolume")
     ps.add_argument("old")
