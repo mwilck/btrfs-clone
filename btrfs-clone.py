@@ -1,4 +1,5 @@
 #! /usr/bin/env python
+# -*- mode: python -*-
 
 # btrfs-clone: clones a btrfs file system to another one
 # Copyright (C) 2017 Martin Wilck
@@ -45,7 +46,7 @@ def check_call(*args, **kwargs):
 def prop_get_ro(path, yesno):
     info = subprocess.check_output([opts.btrfs, "property", "get", "-ts",
                                     path, "ro"])
-    info = info.rstrip()
+    info = info.decode("ascii").rstrip()
     return info == "ro=true"
 
 def prop_set_ro(path, yesno):
@@ -73,7 +74,7 @@ class Subvol:
     def _init_from_show(self):
         info = subprocess.check_output([opts.btrfs, "subvolume", "show",
                                         "%s/%s" % (self.mnt, self.path)])
-        for line in info.split("\n"):
+        for line in info.decode("ascii").split("\n"):
             try:
                 k, v = line.split(":", 1)
             except ValueError:
@@ -139,7 +140,7 @@ def get_subvols(mnt):
                                     "-t", "--sort=ogen",
                                     mnt])
     svs = []
-    for line in vols.split("\n"):
+    for line in vols.decode("ascii").split("\n"):
         # Skip header lines
         if line is "" or not line[0].isdigit():
             continue
@@ -163,7 +164,7 @@ def umount_root_subvol(dir):
 def mount_root_subvol(mnt):
     td = tempfile.mkdtemp()
     info = subprocess.check_output([opts.btrfs, "filesystem", "show", mnt])
-    line = info.split("\n")[0]
+    line = info.decode("ascii").split("\n")[0]
     uuid = re.search(r"uuid: (?P<uuid>[-a-f0-9]*)", line).group("uuid")
     subprocess.check_call(["mount", "-o", "subvolid=5", "UUID=%s" % uuid, td])
     atexit.register(umount_root_subvol, td)
