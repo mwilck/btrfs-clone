@@ -735,7 +735,7 @@ def main():
     if (old_uuid == new_uuid):
         msg = ("%s and %s are the same file system" %
                (opts.old, opts.new))
-    if len(os.listdir(new_mnt)) > 0:
+    elif len(os.listdir(new_mnt)) > 0:
         msg = "fileystem %s is not empty" % opts.new
 
     if msg is not None and not opts.dry_run:
