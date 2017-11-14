@@ -1,7 +1,7 @@
 # btrfs-clone
 
 This program clones an existing BTRFS file system to a new one,
-cloning each subvolume in order. Thanks to Thomas Luzat for the [original idea][1]
+cloning each subvolume in order. Thanks to Thomas Luzat for the [original idea][1].
 
 **This program is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -15,10 +15,13 @@ GNU General Public License for more details.**
 ## Options:
 
  * `--verbose`: increase verbosity level. This option can be repeated. For
-   verbose levels >=2, btrfs send/receive output is saved in the working directory.
+   verbose levels >=2, btrfs send/receive output is saved in the working
+   directory, and python tracebacks are printed upon exceptions.
  * `--force`: proceed in possibly dangerous conditions.
  * `--dry-run`: do no actual transfer data. It's recommended to run this first
    together with `-v` and examine the output to see what would be done.
+ * `--ignore-errors`: continue after errors in send/receive. May be useful for
+   backing up corrupted file systems. Make sure to check results.
  * `--strategy`: either "parent", "snapshot", "chronological",
    or "generation" (default); see below.
  * `--toplevel`: don't try to write the target toplevel subvolume, see below.
@@ -50,17 +53,19 @@ Tools like **rsync**, which are not aware of btrfs file system internals, will
  * The new filesystem should ideally be newly created, and have a distinct
  UUID from the one to be cloned. The `--force` option allows to attempt
  cloning even if this is not the case.
- * Both file systems must be mounted, but they don't need to be mounted by
- the toplevel subvolume. The program will remount the top subvolumes on
- temporary mount points.
+ * Both source and target file systems must be mounted, but they don't need to
+ be mounted by the toplevel subvolume. The program will remount the top
+ subvolumes on temporary mount points.
  * The tool does not check beforehand if the new file system is large enough
  to hold all data. Overflow of the target file system causes the cloning
  procedure to fail, but should not do any harm to the system.
  * This tool should be pretty safe to use. The source file system is only
  touched for creating a snapshot of the toplevel volume (see "toplevel"
  below).  During cloning, all subvolumes of the origin FS are set to read-only
- mode Thus if cloning your root fs, make sure there isn't much other stuff
+ mode. Thus if cloning your root fs, make sure there isn't much other stuff
  going on in the system.
+ * The tool cleans up after exit, e.g. read-only flags for subvolumes in the
+ source file system are restored to there original state on exit.
 
 ### Checking data integrity
 
