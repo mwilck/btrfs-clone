@@ -225,7 +225,10 @@ def do_send_recv(old, new, send_flags=[]):
                 print ("Error in send:\n%s" % send.stderr.read())
             if recv.returncode != 0:
                 print ("Error in recv:\n%s" % recv.stderr.read())
-        raise RuntimeError("Error in send/recv for %s -> %s" % (old, new))
+        if opts.ignore_errors:
+            print ("*** IGNORING error and continuing ***")
+        else:
+            raise RuntimeError("Error in send/recv for %s -> %s" % (old, new))
 
 def send_root(old, new):
     name = randstr()
@@ -703,6 +706,8 @@ def make_args():
     ps.add_argument("--no-unshare", action='store_true')
     ps.add_argument("-t", "--toplevel", action='store_false',
                     help="clone toplevel into a subvolume")
+    ps.add_argument("-i", "--ignore-errors", action="store_true",
+                    help="continue after send/recv errors")
     ps.add_argument("old")
     ps.add_argument("new")
     return ps
