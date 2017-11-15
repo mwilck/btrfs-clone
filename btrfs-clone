@@ -339,17 +339,81 @@ class SvBaseDir(object):
             if not sv.ro and not opts.dry_run:
                 prop_set_ro(newpath, False)
 
-def parents_getter(subvols):
-    lookup = { x.uuid: x for x in subvols }
-    def _getter(x):
-        while x.parent_uuid is not None:
-            try:
-                x = lookup[x.parent_uuid]
-            except KeyError:
-                return
+class SubvolSet(object):
+
+    def __init__(self, subvols):
+        self.subvols = subvols
+        self.lookup = { x.uuid: x for x in subvols }
+
+    def parents_getter(self):
+        def _getter(x):
+            while x.parent_uuid is not None:
+                try:
+                    x = self.lookup[x.parent_uuid]
+                except KeyError:
+                    return
+                else:
+                    yield x
+        return _getter
+
+    def get_parents(self, x):
+        return self.parents_getter()(x)
+
+    def get_parent(self, x):
+        if x.parent_uuid is not None and x.parent_uuid in self.lookup:
+            return self.lookup[x.parent_uuid]
+        return None
+
+    def siblings_getter(self):
+        def _getter(x):
+            return (y for y in self.subvols if x.parent_uuid == y.parent_uuid
+                    and y.uuid != x.uuid)
+        return _getter
+
+    def get_siblings(self, x):
+        return self.siblings_getter()(x)
+
+    def children_getter(self):
+        def _getter(uuid):
+            return (y for y in self.subvols if y.parent_uuid == uuid)
+        return _getter
+
+    def get_children(self, x):
+        return self.children_getter()(x)
+
+    def descendants_getter(self):
+        def _getter(uuid):
+            children = self.get_children(uuid)
+            for c in children:
+                yield c
+                for x in (y for y in _getter(c.uuid)):
+                    yield x
+        return _getter    
+            
+    def get_descendants(self, x):
+        return self.descendants_getter()(x)
+
+    def relatives_getter(self):
+        def _getter(sv):
+            parents = list(self.get_parents(sv))
+            if parents:
+                grandpa = parents[-1]
             else:
+                grandpa = sv
+            if grandpa.parent_uuid is not None:
+                # oldest ancestor is not in subvols
+                uuid = grandpa.parent_uuid
+            else:
+                uuid = grandpa.uuid
+                if uuid != sv.uuid:
+                    yield grandpa
+            for x in (y for y in self.get_descendants(uuid)):
                 yield x
-    return _getter
+        return _getter
+
+    def get_relatives(self, x):
+        return self.relatives_getter()(x)
+
 
 class Strategy(object):
 
@@ -369,7 +433,8 @@ class Strategy(object):
 
     def prepare_subvols(self):
         self.subvols = get_subvols(self.old)
-        self.get_parents = parents_getter(self.subvols)
+        self.svset = SubvolSet(self.subvols)
+        self.get_parents = self.svset.parents_getter()
         self.subvols.sort(key = self.sort_key)
 
         atexit.register(set_all_ro, False, self.subvols, self.old)
@@ -416,6 +481,15 @@ class ParentStrategy(Strategy):
 
     def _done(self, sv):
         sv.set_ro(False, self.new)
+
+class BruteStrategy(ParentStrategy):
+
+    def send_subvol(self, sv):
+        relatives = (y for y in self.svset.get_relatives(sv) if y.ogen < sv.ogen)
+        flags = self.build_flags(relatives, self.svset.get_parent(sv))
+        do_send_recv(sv.get_path(self.old),
+                     os.path.dirname(sv.get_path(self.new)),
+                     flags)
 
 class _FlatStrategy(Strategy):
 
@@ -680,14 +754,15 @@ class GenerationStrategy(_FlatStrategy):
     def _done(self, sv):
         self.done = [sv] + self.done
 
+_strategies = {
+    "parent": ParentStrategy,
+    "snapshot": SnapStrategy,
+    "chronological": ChronoStrategy,
+    "generation": GenerationStrategy,
+    "bruteforce": BruteStrategy,
+}
 
 def get_strategy():
-    _strategies = {
-        "parent": ParentStrategy,
-        "snapshot": SnapStrategy,
-        "chronological": ChronoStrategy,
-        "generation": GenerationStrategy,
-    }
     return _strategies[opts.strategy]
 
 def make_args():
@@ -697,8 +772,7 @@ def make_args():
     ps.add_argument("-f", "--force", action='store_true')
     ps.add_argument("-n", "--dry-run", action='store_true')
     ps.add_argument("-s", "--strategy", default="generation",
-                    choices=["parent", "snapshot", "chronological",
-                             "generation"])
+                    choices=_strategies.keys())
     ps.add_argument("--snap-base")
     ps.add_argument("--no-unshare", action='store_true')
     ps.add_argument("-t", "--toplevel", action='store_false',

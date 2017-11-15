@@ -20,7 +20,7 @@ GNU General Public License for more details.**
  * `--dry-run`: do no actual transfer data. It's recommended to run this first
    together with `-v` and examine the output to see what would be done.
  * `--strategy`: either "parent", "snapshot", "chronological",
-   or "generation" (default); see below.
+   "generation" (default), or "bruteforce"; see below.
  * `--toplevel`: don't try to write the target toplevel subvolume, see below.
  * `--btrfs`: set full path to "btrfs" executable.
 
@@ -83,13 +83,14 @@ determine reference subvolumes for each subvolume cloned.
 
 ### Child-parent relationship
 
-Except for the "parent" strategy, the child-parent relationships ("C is a
-snapshot of P") in the target file system will be different from those in the
-source file system. If 3rd party tools rely on a certain parent-child
-relationship, only the "parent" strategy can be used.  I tried this with
-**snapper**, and it seemed to work fine with a clone generated with the
-"generation" strategy; apparently it only relies on its own meta data, which
-is preserved in the cloning procedure.
+Except for the "parent" and "bruteforce" strategy, the child-parent
+relationships ("C is a snapshot of P") in the target file system will
+be different from those in the source file system. If 3rd party tools
+rely on a certain parent-child relationship, only the "parent"
+strategy can be used.  I tried this with **snapper**, and it seemed to
+work fine with a clone generated with the "generation" strategy;
+apparently it only relies on its own meta data, which is preserved in
+the cloning procedure.
 
 Moreover, file systems will not be cloned in the order of their creation, thus
 when a subvolumeis cloned, we can't be sure that its parent in the filesystem
@@ -129,13 +130,26 @@ where the current fs tree (the default subvolume) has been snapshotted
 several times in the past:
 
     current ---------------------------------\
-	             |       |        |          |
-	           snap4   snap3    snap2      snap1
+                 |       |        |          |
+               snap4   snap3    snap2      snap1
 
 With "parent" strategy (which was Thomas' original proposal), we'd clone
 "current" first, and after that the snapshots one by one, using "current"
 both as "parent" and "clone source" (["-p" option to btrfs-send][2]) for every
 snapshot.
+
+### "bruteforce" strategy
+
+This strategy is similar to "parent". But it uses every "relative" of
+the subvolume to be cloned as clone source, rather than just the
+direct parent. The set of "relatives" contains all ancestors and all
+descendants of all ancestors. This may lead to a rather large set of
+clone sources, slowing down **btrfs send** operation.
+
+Like "parent", this strategy preserves the child-parent
+relationships. As outlined above, that may be suboptimal for meta data
+cloning. But data cloning should be pretty good with this method, as
+every possible clone source is taken into account.
 
 ### "snapshot" strategy
 
