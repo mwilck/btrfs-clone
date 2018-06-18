@@ -18,6 +18,7 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
+from __future__ import print_function
 import sys
 import re
 import os
@@ -838,8 +839,11 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except SystemExit:
+        # argparse error
+        pass
     except:
-        if opts is None or opts.verbose > 1:
+        if opts is not None and opts.verbose > 1:
             print_exc()
         else:
             print ("%s" % sys.exc_info()[1])
