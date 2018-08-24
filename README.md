@@ -44,9 +44,14 @@ different approach would be to use **btrfs replace**. The two latter variants
 destroy the source file system though, they're only really use full for file
 system *migration*.
 
+One problem with all these approaches is that they also
+clone the file system UUID, therefore the devices with original and cloned file system
+can't be present in the same system at the same time without confusing the
+kernel. This problem can be overcome by running **btrfstune -u** after the cloning operation.
+
 Tools like **rsync**, which are not aware of btrfs file system internals, will
- waste disk space in the presence of snapshots, because they can't take
- advantage of shared extents.
+waste disk space in the presence of snapshots, because they can't take
+advantage of shared extents.
 
 ## General remarks
 
