@@ -186,23 +186,24 @@ def set_all_ro(yesno, subvols, mnt = None):
             else:
                 raise
 
-_gz_re = re.compile(r"\.gz$")
+def do_compress(fn):
+    if opts.log_compresslevel == 0:
+        return
+    try:
+        check_call(["gzip", "-%d" % opts.log_compresslevel, fn])
+    except CalledProcessError:
+        print("Failed to compress %s", fn)
+
 def do_send_recv(old, new, send_flags=[]):
     send_cmd = ([opts.btrfs, "send"] + VERBOSE + send_flags + [old])
     recv_cmd = ([opts.btrfs, "receive"] + VERBOSE + [new])
 
     if opts.verbose > 1 and not opts.dry_run:
         name = new.replace("/", "-")
-        recv_name = "btrfs-recv-%s.log.gz" % name
-        send_name = "btrfs-send-%s.log.gz" % name
-        if opts.log_compresslevel != 0:
-            recv_log = gzopen(recv_name, "wb", opts.log_compresslevel)
-            send_log = gzopen(send_name, "wb", opts.log_compresslevel)
-        else:
-            recv_name = _gz_re.sub("", recv_name)
-            send_name = _gz_re.sub("", send_name)
-            recv_log = open(recv_name, "wb")
-            send_log = open(send_name, "wb")
+        recv_name = "btrfs-recv-%s.log" % name
+        send_name = "btrfs-send-%s.log" % name
+        recv_log = open(recv_name, "wb")
+        send_log = open(send_name, "wb")
     else:
         recv_log = PIPE
         send_log = PIPE
@@ -222,8 +223,10 @@ def do_send_recv(old, new, send_flags=[]):
         send.wait()
     finally:
         if opts.verbose > 1 and not opts.dry_run:
-            recv_log.close()
             send_log.close()
+            do_compress(send_name)
+            recv_log.close()
+            do_compress(recv_name)
 
     if recv.returncode != 0 or send.returncode != 0:
         if opts.verbose > 1:
