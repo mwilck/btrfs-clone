@@ -10,7 +10,7 @@ GNU General Public License for more details.**
 
 ## Usage:
 
-    btrfs-clone [options] <mount-point-of-existing-FS> <mount-point-of-new-FS>
+    btrfs-clone [options] <block-device-of-existing-FS> <block-device-of-new-FS>
 
 ## Options:
 
@@ -30,9 +30,7 @@ GNU General Public License for more details.**
 ## Example for real-world use:
 
     mkfs.btrfs /dev/sdb1
-    mkdir /mnt/new
-    mount /dev/sdb1 /mnt/new
-    btrfs-clone.py / /mnt/new
+    btrfs-clone.py /dev/sda1 /mnt/sdb1
 
 ## Alternatives
 
