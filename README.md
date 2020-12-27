@@ -103,7 +103,7 @@ apparently it only relies on its own meta data, which is preserved in
 the cloning procedure.
 
 Moreover, file systems will not be cloned in the order of their creation, thus
-when a subvolumeis cloned, we can't be sure that its parent in the filesystem
+when a subvolume is cloned, we can't be sure that its parent in the filesystem
 tree (btrfs `parent_id`, don't confuse with `parent_uuid`) has already been
 transferred. Therefore subvolumes are first cloned flatly into a temporary
 directory. After all subvolumes have been transferred, they are moved into
