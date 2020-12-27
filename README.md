@@ -70,7 +70,7 @@ advantage of shared extents.
  mode. Thus if cloning your root fs, make sure there isn't much other stuff
  going on in the system.
  * The tool cleans up after exit, e.g. read-only flags for subvolumes in the
- source file system are restored to there original state on exit.
+ source file system are restored to their original state on exit.
 
 ### Checking data integrity
 
