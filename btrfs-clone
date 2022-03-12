@@ -141,7 +141,7 @@ def get_subvols(mnt):
     svs = []
     for line in vols.decode("ascii").split("\n"):
         # Skip header lines
-        if len(line) is 0 or not line[0].isdigit():
+        if len(line) == 0 or not line[0].isdigit():
             continue
         try:
             sv = Subvol(mnt, line.split()[3])
