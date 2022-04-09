@@ -50,7 +50,7 @@ def prop_get_ro(path, yesno):
     return info == "ro=true"
 
 def prop_set_ro(path, yesno):
-    maybe_call([opts.btrfs, "property", "set", "-ts",
+    maybe_call([opts.btrfs, "property", "set"] + ([] if yesno else ["-f"]) + ["-ts",
                 path, "ro", "true" if yesno else "false"])
 
 class Subvol:
@@ -248,7 +248,7 @@ def send_root(old, new):
     check_call([opts.btrfs, "subvolume", "snapshot", "-r", old, old_snap])
     atexit.register(check_call, [opts.btrfs, "subvolume", "delete", old_snap])
     do_send_recv(old_snap, new)
-    maybe_call([opts.btrfs, "property", "set", new_snap, "ro", "false"])
+    maybe_call([opts.btrfs, "property", "set", "-f", new_snap, "ro", "false"])
 
     dir = old_snap if opts.dry_run else new_snap
     dev = os.lstat(dir)[ST_DEV]
