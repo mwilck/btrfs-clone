@@ -70,7 +70,7 @@ advantage of shared extents.
  mode. Thus if cloning your root fs, make sure there isn't much other stuff
  going on in the system.
  * The tool cleans up after exit, e.g. read-only flags for subvolumes in the
- source file system are restored to there original state on exit.
+ source file system are restored to their original state on exit.
 
 ### Checking data integrity
 
@@ -103,7 +103,7 @@ apparently it only relies on its own meta data, which is preserved in
 the cloning procedure.
 
 Moreover, file systems will not be cloned in the order of their creation, thus
-when a subvolumeis cloned, we can't be sure that its parent in the filesystem
+when a subvolume is cloned, we can't be sure that its parent in the filesystem
 tree (btrfs `parent_id`, don't confuse with `parent_uuid`) has already been
 transferred. Therefore subvolumes are first cloned flatly into a temporary
 directory. After all subvolumes have been transferred, they are moved into
