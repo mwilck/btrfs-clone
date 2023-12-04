@@ -144,7 +144,7 @@ def get_subvols(mnt):
         if len(line) == 0 or not line[0].isdigit():
             continue
         try:
-            sv = Subvol(mnt, line.split()[3])
+            sv = Subvol(mnt, line.split(maxsplit=3)[3])
         except (Subvol.NoSubvol, IndexError):
             pass
         except:
