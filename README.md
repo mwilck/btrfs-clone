@@ -1,3 +1,26 @@
+# The btrfs-clone project is archived. Issues will not be fixed.
+
+**THIS PROJECT IS UNMAINTAINED as of September 2025.**
+
+**For cloning a btrfs file system including all subvolumes in 2025 or later,
+I recommend to perform a low-level copy with "dd" or a similar tool, followed by
+changing the filesystem UUID. See [Alternatives](#alternatives) below.**
+
+**btrfs-clone has been in maintenance mode for some time now. I (the original
+author) haven't been using it actively for years. There have been
+reports of the tool malfunctioning. I haven't had time to debug these
+issues. I think that changes in the kernel or in btrfs-tools may be
+responsible; after all, the bulk of this code has been created 8 years
+ago. But whatever the reason is, I am not going to fix it any more. If someone
+else wants to take it up, feel free to do so under the terms of its license.**
+
+**I believe that the code is still to some extent useful for understanding
+how btrfs subvolumes are related to each other. Therefore this repository is
+only archived, not deleted. Feel free to experiment with this code, but don't
+expect it to work. The tool may cause your system to hang or crash.**
+
+**The original README of btrfs-clone follows below.**
+
 # btrfs-clone
 
 This program clones an existing BTRFS file system to a new one,
